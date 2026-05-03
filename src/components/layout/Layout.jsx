@@ -11,6 +11,7 @@ const TITLES = {
   '/analytics': 'Analytics',
   '/products': 'Products',
   '/vendors': 'Vendors',
+  '/partners': 'Partners',
   '/categories': 'Categories',
   '/people': 'People',
   '/settings': 'Settings',

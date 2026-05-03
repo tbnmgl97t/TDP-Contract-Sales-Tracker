@@ -14,6 +14,7 @@ import {
   LogOut,
   ChevronRight,
   X,
+  Network,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 
@@ -25,6 +26,7 @@ const NAV = [
   { divider: true },
   { to: '/products', icon: Package, label: 'Products' },
   { to: '/vendors', icon: Store, label: 'Vendors' },
+  { to: '/partners', icon: Network, label: 'Partners' },
   { to: '/categories', icon: Tag, label: 'Categories' },
   { to: '/people', icon: Users, label: 'People' },
   { to: '/companies', icon: Building2, label: 'Companies' },

@@ -89,6 +89,7 @@ export default function DealDetail() {
   const [deal, setDeal] = useState(null)
   const [dealProducts, setDealProducts] = useState([])
   const [dealTeam, setDealTeam] = useState([])
+  const [dealPartners, setDealPartners] = useState([])
   const [contracts, setContracts] = useState([])
   const [loading, setLoading] = useState(true)
   const [deleteDlg, setDeleteDlg] = useState(false)
@@ -114,11 +115,13 @@ export default function DealDetail() {
       { data: dps },
       { data: team },
       { data: conts },
+      { data: dPartners },
     ] = await Promise.all([
       supabase.from('deals').select('*').eq('id', id).single(),
       supabase.from('deal_products').select('*, products(name, commission_metric, unit_label)').eq('deal_id', id),
       supabase.from('deal_team').select('*, people(name, role, email)').eq('deal_id', id),
       supabase.from('contracts').select('*, ai_analysis').eq('deal_id', id).order('uploaded_at', { ascending: false }),
+      supabase.from('deal_partners').select('*, partners(name)').eq('deal_id', id).order('sort_order'),
     ])
     let milestonesData = []
     if (dps && dps.length > 0) {
@@ -135,6 +138,7 @@ export default function DealDetail() {
       milestones: milestonesData.filter((m) => m.deal_product_id === dp.id),
     })))
     setDealTeam(team || [])
+    setDealPartners(dPartners || [])
     setContracts(conts || [])
     setLoading(false)
   }
@@ -402,6 +406,16 @@ export default function DealDetail() {
     return s + (p.annual_value || 0)
   }, 0)
 
+  // Partner stacked pricing
+  let _cv = productACV > 0 ? productACV : (deal.acv || 0)
+  const partnerStack = dealPartners.map((dp) => {
+    const pct = parseFloat(dp.commission_pct) / 100
+    const prev = _cv
+    _cv = pct > 0 && pct < 1 ? prev / (1 - pct) : prev
+    return { ...dp, commission_amount: _cv - prev }
+  })
+  const customerAcv = _cv
+
   const schedule = buildCommissionSchedule(
     deal,
     dealProducts,
@@ -476,6 +490,35 @@ export default function DealDetail() {
           </Card>
         ))}
       </div>
+
+      {/* Partner commissions */}
+      {partnerStack.length > 0 && (
+        <Card>
+          <CardHeader title="Partner Commissions" subtitle={`Customer ACV: ${fmt(customerAcv, 2)}`} />
+          <div className="space-y-2">
+            <div className="flex justify-between text-sm py-1">
+              <span className="text-gray-500">Trilogy ACV (base)</span>
+              <span className="font-medium text-navy-900">{fmt(productACV > 0 ? productACV : deal.acv, 2)}</span>
+            </div>
+            {partnerStack.map((dp, i) => (
+              <div key={dp.id} className="flex items-center justify-between text-sm py-1 border-t border-gray-50">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center text-purple-700 font-bold text-xs">{i + 1}</div>
+                  <div>
+                    <p className="font-medium text-navy-900">{dp.partners?.name}</p>
+                    <p className="text-xs text-gray-400">{dp.commission_pct}% referral commission</p>
+                  </div>
+                </div>
+                <span className="font-semibold text-purple-700">{fmt(dp.commission_amount, 2)}</span>
+              </div>
+            ))}
+            <div className="flex justify-between text-sm pt-2 border-t border-gray-200 font-semibold">
+              <span className="text-navy-900">Customer ACV (final)</span>
+              <span className="text-navy-900">{fmt(customerAcv, 2)}</span>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Deal details */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">

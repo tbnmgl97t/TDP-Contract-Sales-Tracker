@@ -14,6 +14,7 @@ import People from './pages/People'
 import Companies from './pages/Companies'
 import Commission from './pages/Commission'
 import Analytics from './pages/Analytics'
+import Partners from './pages/Partners'
 import Settings from './pages/Settings'
 import ResetPassword from './pages/ResetPassword'
 import { PageSpinner } from './components/ui/Spinner'
@@ -65,6 +66,7 @@ export default function App() {
           <Route path="deals/:id/edit" element={<NewDeal />} />
           <Route path="products" element={<Products />} />
           <Route path="vendors" element={<Vendors />} />
+          <Route path="partners" element={<Partners />} />
           <Route path="categories" element={<Categories />} />
           <Route path="people" element={<People />} />
           <Route path="companies" element={<Companies />} />

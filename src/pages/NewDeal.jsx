@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Plus, Trash2, Info, ChevronUp, ChevronDown } from 'lucide-react'
+import { Plus, Trash2, Info, ChevronUp, ChevronDown, Network } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import Button from '../components/ui/Button'
 import Input, { Select, Textarea } from '../components/ui/Input'
@@ -586,6 +586,7 @@ export default function NewDeal() {
   const [pricingMap, setPricingMap] = useState({})
   const [spifTiers, setSpifTiers] = useState([])
   const [globalRate, setGlobalRate] = useState(0.07)
+  const [partners, setPartners] = useState([])
 
   const [form, setForm] = useState({
     name: '',
@@ -602,21 +603,24 @@ export default function NewDeal() {
   })
   const [dealProducts, setDealProducts] = useState([])
   const [teamMembers, setTeamMembers] = useState([])
+  const [dealPartners, setDealPartners] = useState([])
 
   useEffect(() => {
     async function loadRefs() {
-      const [{ data: prods }, { data: peeps }, { data: pricing }, { data: tiers }, { data: comps }, { data: settings }] = await Promise.all([
+      const [{ data: prods }, { data: peeps }, { data: pricing }, { data: tiers }, { data: comps }, { data: settings }, { data: pts }] = await Promise.all([
         supabase.from('products').select('*, vendors(name)').eq('active', true).order('name'),
         supabase.from('people').select('*').eq('active', true).order('name'),
         supabase.from('product_pricing_params').select('*').order('effective_date', { ascending: false }),
         supabase.from('spif_tiers').select('*'),
         supabase.from('companies').select('id, name').order('name'),
         supabase.from('commission_settings').select('global_commission_rate').eq('id', 1).single(),
+        supabase.from('partners').select('*').eq('active', true).order('name'),
       ])
       setProducts(prods || [])
       setPeople(peeps || [])
       setCompanies(comps || [])
       setSpifTiers(tiers || [])
+      setPartners(pts || [])
       if (settings) setGlobalRate(parseFloat(settings.global_commission_rate) || 0.07)
 
       // Latest pricing per product
@@ -684,6 +688,13 @@ export default function NewDeal() {
           .eq('deal_id', editId)
         setTeamMembers((team || []).map((t) => ({ ...t })))
 
+        const { data: dPartners } = await supabase
+          .from('deal_partners')
+          .select('*, partners(name)')
+          .eq('deal_id', editId)
+          .order('sort_order')
+        setDealPartners((dPartners || []).map((dp) => ({ ...dp, commission_pct: dp.commission_pct ?? '' })))
+
         setLoading(false)
       } else {
         setLoading(false)
@@ -700,6 +711,32 @@ export default function NewDeal() {
   const acv = parseFloat(form.acv) || 0
   const totalCommission = dealProducts.reduce((s, dp) => s + (dp.commission_amount || 0), 0)
   const totalAllocated = teamMembers.filter((m) => m.role === 'sales').reduce((s, m) => s + (m.commission_percent || 0), 0)
+
+  // Base ACV = sum of product revenues (Trilogy's price before partner markup)
+  const productBaseAcv = useMemo(() => {
+    const fromProducts = dealProducts.reduce((s, dp) => {
+      const prod = products.find((p) => p.id === dp.product_id)
+      if (!prod) return s
+      if (prod.is_usage_based) return s + (dp.total_revenue || 0)
+      if (prod.commission_metric === 'GM') return s + (dp.yearly_cost || 0)
+      return s + (dp.annual_value || 0)
+    }, 0)
+    return fromProducts > 0 ? fromProducts : acv
+  }, [dealProducts, products, acv])
+
+  // Stack partners: each layer = prev / (1 - pct)
+  const { customerAcv, stackedPartners } = useMemo(() => {
+    let cv = productBaseAcv
+    const stacked = dealPartners
+      .filter((p) => p.partner_id && parseFloat(p.commission_pct) > 0)
+      .map((p) => {
+        const pct = parseFloat(p.commission_pct) / 100
+        const prev = cv
+        cv = pct < 1 ? prev / (1 - pct) : prev
+        return { ...p, commission_amount: cv - prev }
+      })
+    return { customerAcv: cv, stackedPartners: stacked }
+  }, [dealPartners, productBaseAcv])
 
   function addProduct() {
     setDealProducts((prev) => [...prev, { _id: Date.now(), product_id: '', commission_amount: 0, milestones: [], _milestone_total: 0, billing_start_date: '', billing_months: '', billing_mode: 'monthly', support_product_ids: [] }])
@@ -734,6 +771,37 @@ export default function NewDeal() {
 
   function removeTeamMember(index) {
     setTeamMembers((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function addPartner() {
+    setDealPartners((prev) => [...prev, { _id: Date.now(), partner_id: '', commission_pct: '' }])
+  }
+
+  function removePartner(index) {
+    setDealPartners((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function movePartner(index, dir) {
+    setDealPartners((prev) => {
+      const next = [...prev]
+      const target = index + dir
+      if (target < 0 || target >= next.length) return prev
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return next
+    })
+  }
+
+  function updatePartner(index, updates) {
+    setDealPartners((prev) => {
+      const next = [...prev]
+      const row = { ...next[index], ...updates }
+      if (updates.partner_id) {
+        const pt = partners.find((p) => p.id === updates.partner_id)
+        if (pt && !next[index].commission_pct) row.commission_pct = pt.default_commission_pct
+      }
+      next[index] = row
+      return next
+    })
   }
 
   async function saveNewCompany() {
@@ -791,6 +859,7 @@ export default function NewDeal() {
       await supabase.from('deals').update(dealData).eq('id', editId)
       await supabase.from('deal_products').delete().eq('deal_id', editId)
       await supabase.from('deal_team').delete().eq('deal_id', editId)
+      await supabase.from('deal_partners').delete().eq('deal_id', editId)
     } else {
       const { data: { session } } = await supabase.auth.getSession()
       if (session?.user?.email) dealData.created_by = session.user.email
@@ -830,6 +899,16 @@ export default function NewDeal() {
       .filter((m) => m.person_id)
       .map(({ _id, id: _dbId, people: _, ...m }) => ({ ...m, deal_id: dealId }))
     if (teamRows.length) await supabase.from('deal_team').insert(teamRows)
+
+    // Insert partners with stacked commission amounts
+    const partnerRows = stackedPartners.map(({ _id, id: _dbId, partners: _, ...dp }, idx) => ({
+      deal_id: dealId,
+      partner_id: dp.partner_id,
+      commission_pct: parseFloat(dp.commission_pct) || 0,
+      commission_amount: dp.commission_amount || 0,
+      sort_order: idx,
+    }))
+    if (partnerRows.length) await supabase.from('deal_partners').insert(partnerRows)
 
     navigate(`/deals/${dealId}`)
   }
@@ -1044,6 +1123,85 @@ export default function NewDeal() {
               </div>
             )
           })}
+        </div>
+      </Card>
+
+      {/* Partners */}
+      <Card>
+        <CardHeader
+          title="Partner Commissions"
+          subtitle={dealPartners.some((p) => p.partner_id) ? `Customer ACV: ${fmt(customerAcv, 2)}` : 'Optional — referral/reseller partners added on top of your ACV'}
+          action={<Button size="sm" variant="secondary" onClick={addPartner} icon={<Plus size={14} />}>Add Partner</Button>}
+        />
+        <div className="space-y-3">
+          {dealPartners.length === 0 && (
+            <div className="text-sm text-gray-400 text-center py-6 border-2 border-dashed border-gray-100 rounded-xl">
+              No partners on this deal.
+            </div>
+          )}
+          {dealPartners.map((row, i) => {
+            const pt = partners.find((p) => p.id === row.partner_id)
+            const stacked = stackedPartners[i]
+            return (
+              <div key={row.id || row._id} className="border border-gray-100 rounded-xl p-4">
+                <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-end">
+                  <Select
+                    label="Partner"
+                    value={row.partner_id}
+                    onChange={(e) => updatePartner(i, { partner_id: e.target.value })}
+                  >
+                    <option value="">Select partner...</option>
+                    {partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </Select>
+                  <Input
+                    label="Commission %"
+                    type="number" min="0" max="99" step="0.1" suffix="%"
+                    value={row.commission_pct}
+                    onChange={(e) => updatePartner(i, { commission_pct: e.target.value })}
+                    className="w-32"
+                  />
+                  <div className="flex flex-col gap-0.5 pb-0.5">
+                    <button onClick={() => movePartner(i, -1)} disabled={i === 0} className="p-1.5 text-gray-400 hover:text-navy-900 hover:bg-gray-100 rounded disabled:opacity-20 transition-colors"><ChevronUp size={14} /></button>
+                    <button onClick={() => movePartner(i, 1)} disabled={i === dealPartners.length - 1} className="p-1.5 text-gray-400 hover:text-navy-900 hover:bg-gray-100 rounded disabled:opacity-20 transition-colors"><ChevronDown size={14} /></button>
+                  </div>
+                  <button onClick={() => removePartner(i)} className="pb-0.5 p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+                {row.partner_id && stacked && (
+                  <div className="mt-3 bg-purple-50 border border-purple-100 rounded-lg p-3 text-xs flex items-center justify-between">
+                    <span className="text-gray-500">{pt?.name} earns {row.commission_pct}% on their layer</span>
+                    <span className="font-bold text-purple-700">{fmt(stacked.commission_amount, 2)}</span>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+
+          {stackedPartners.length > 0 && (
+            <div className="bg-gray-50 rounded-xl p-4 space-y-2">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Pricing Breakdown</p>
+              <div className="space-y-1.5 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Trilogy ACV (base)</span>
+                  <span className="font-medium text-navy-900">{fmt(productBaseAcv, 2)}</span>
+                </div>
+                {stackedPartners.map((p) => {
+                  const pt = partners.find((x) => x.id === p.partner_id)
+                  return (
+                    <div key={p.partner_id} className="flex justify-between text-purple-700">
+                      <span>+ {pt?.name} ({p.commission_pct}%)</span>
+                      <span className="font-medium">+{fmt(p.commission_amount, 2)}</span>
+                    </div>
+                  )
+                })}
+                <div className="flex justify-between pt-1.5 border-t border-gray-200 font-semibold">
+                  <span className="text-navy-900">Customer ACV</span>
+                  <span className="text-navy-900">{fmt(customerAcv, 2)}</span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 
