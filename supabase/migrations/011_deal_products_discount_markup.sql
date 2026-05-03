@@ -1,0 +1,2 @@
+ALTER TABLE deal_products ADD COLUMN IF NOT EXISTS markup_pct DECIMAL(5,2);
+ALTER TABLE deal_products ADD COLUMN IF NOT EXISTS discount_pct DECIMAL(5,2);

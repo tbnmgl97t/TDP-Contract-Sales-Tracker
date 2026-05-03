@@ -11,8 +11,11 @@ import Products from './pages/Products'
 import Vendors from './pages/Vendors'
 import Categories from './pages/Categories'
 import People from './pages/People'
+import Companies from './pages/Companies'
 import Commission from './pages/Commission'
+import Analytics from './pages/Analytics'
 import Settings from './pages/Settings'
+import ResetPassword from './pages/ResetPassword'
 import { PageSpinner } from './components/ui/Spinner'
 
 function ProtectedRoute({ children, session }) {
@@ -45,6 +48,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={session ? <Navigate to="/dashboard" replace /> : <Login />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route
           path="/"
           element={
@@ -63,7 +67,9 @@ export default function App() {
           <Route path="vendors" element={<Vendors />} />
           <Route path="categories" element={<Categories />} />
           <Route path="people" element={<People />} />
+          <Route path="companies" element={<Companies />} />
           <Route path="commission" element={<Commission />} />
+          <Route path="analytics" element={<Analytics />} />
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>

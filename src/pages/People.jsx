@@ -28,7 +28,11 @@ function SpifTierRow({ tier, onChange, onRemove }) {
 }
 
 function PersonForm({ initial, onSave, onClose }) {
-  const [form, setForm] = useState(initial || { name: '', email: '', role: 'sales', active: true })
+  const [form, setForm] = useState(
+    initial
+      ? { name: initial.name, email: initial.email || '', role: initial.role, active: initial.active }
+      : { name: '', email: '', role: 'sales', active: true }
+  )
   const [tiers, setTiers] = useState([])
   const [saving, setSaving] = useState(false)
 
@@ -36,7 +40,7 @@ function PersonForm({ initial, onSave, onClose }) {
     async function loadTiers() {
       if (initial?.id) {
         const { data } = await supabase.from('spif_tiers').select('*').eq('person_id', initial.id)
-        setTiers(data || [])
+        setTiers((data || []).sort((a, b) => (b.acv_min || 0) - (a.acv_min || 0)))
       }
     }
     loadTiers()
@@ -97,12 +101,12 @@ function PersonForm({ initial, onSave, onClose }) {
             <p className="text-sm text-gray-400 text-center py-3 border border-dashed border-gray-200 rounded-lg">No SPIF tiers set.</p>
           )}
           <div className="space-y-2">
-            {tiers.map((tier, i) => (
+            {[...tiers].sort((a, b) => (b.acv_min || 0) - (a.acv_min || 0)).map((tier, i) => (
               <SpifTierRow
-                key={i}
+                key={tier.id || i}
                 tier={tier}
-                onChange={(updated) => setTiers((prev) => { const n = [...prev]; n[i] = updated; return n })}
-                onRemove={() => setTiers((prev) => prev.filter((_, j) => j !== i))}
+                onChange={(updated) => setTiers((prev) => prev.map((t) => t === tier ? updated : t))}
+                onRemove={() => setTiers((prev) => prev.filter((t) => t !== tier))}
               />
             ))}
           </div>

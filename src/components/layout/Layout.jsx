@@ -8,6 +8,7 @@ const TITLES = {
   '/deals': 'Deals',
   '/deals/new': 'New Deal',
   '/commission': 'Commission',
+  '/analytics': 'Analytics',
   '/products': 'Products',
   '/vendors': 'Vendors',
   '/categories': 'Categories',

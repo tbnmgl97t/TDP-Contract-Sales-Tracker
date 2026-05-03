@@ -1,7 +1,27 @@
 import { clsx } from 'clsx'
-import { forwardRef } from 'react'
+import { forwardRef, useState } from 'react'
 
-const Input = forwardRef(function Input({ label, error, hint, className, prefix, suffix, ...props }, ref) {
+function formatWithCommas(val) {
+  if (val === '' || val === null || val === undefined) return ''
+  const parts = String(val).split('.')
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  return parts.join('.')
+}
+
+const Input = forwardRef(function Input({ label, error, hint, className, prefix, suffix, commas, ...props }, ref) {
+  const [focused, setFocused] = useState(false)
+
+  const inputProps = commas
+    ? {
+        type: 'text',
+        inputMode: 'numeric',
+        value: focused ? props.value : formatWithCommas(props.value),
+        onChange: (e) => props.onChange?.({ ...e, target: { ...e.target, value: e.target.value.replace(/,/g, '') } }),
+        onFocus: (e) => { setFocused(true); props.onFocus?.(e) },
+        onBlur: (e) => { setFocused(false); props.onBlur?.(e) },
+      }
+    : {}
+
   return (
     <div className={clsx('flex flex-col gap-1', className)}>
       {label && (
@@ -25,6 +45,7 @@ const Input = forwardRef(function Input({ label, error, hint, className, prefix,
             error ? 'border-red-400 bg-red-50' : 'border-gray-200 bg-white'
           )}
           {...props}
+          {...inputProps}
         />
         {suffix && (
           <span className="absolute right-3 text-gray-500 text-sm select-none">{suffix}</span>

@@ -1,33 +1,59 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Plus, Trash2, Info } from 'lucide-react'
+import { Plus, Trash2, Info, ChevronUp, ChevronDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import Button from '../components/ui/Button'
 import Input, { Select, Textarea } from '../components/ui/Input'
+import CurrencyInput from '../components/ui/CurrencyInput'
 import Card, { CardHeader } from '../components/ui/Card'
 import { DEAL_STAGES, DEAL_TYPES } from '../lib/constants'
 import { calcJwxValues, calcProductCommission, calcSpif, fmt } from '../lib/commission'
 import { PageSpinner } from '../components/ui/Spinner'
 
-function ProductRow({ item, products, pricingMap, contractMonths, onChange, onRemove }) {
+function ProductRow({ item, products, vendors, pricingMap, contractMonths, contractEnd, globalRate, onChange, onRemove, onMoveUp, onMoveDown, isFirst, isLast }) {
   const product = products.find((p) => p.id === item.product_id)
   const isUsageBased = product?.is_usage_based
   const isGM = product?.commission_metric === 'GM'
+  const filteredProducts = item._vendor_id ? products.filter((p) => p.vendor_id === item._vendor_id) : products
+
+  // GM non-usage helpers
+  const gmType = isGM && !isUsageBased ? (item._margin_type === 'percent' ? 'percent' : 'fixed') : null
+  const isQuantityBased = isGM && !isUsageBased && !!product?.quantity_label
+
+  function handleGMChange(updates) {
+    const next = { ...item, ...updates }
+    const qty = parseInt(next.quantity) || 0
+    let totalCogs = parseFloat(next.cogs_amount) || 0
+    let listPr = parseFloat(next.list_price) || 0
+
+    if (isQuantityBased) {
+      totalCogs = (parseFloat(next._cogs_per_item) || 0) * qty * contractMonths
+      listPr = gmType === 'percent'
+        ? totalCogs * (1 + (parseFloat(next.markup_pct) || 0) / 100)
+        : (parseFloat(next._list_price_per_item) || 0) * qty * contractMonths
+    } else if (gmType === 'percent') {
+      listPr = totalCogs * (1 + (parseFloat(next.markup_pct) || 0) / 100)
+    }
+
+    const disc = parseFloat(next.discount_pct) || 0
+    onChange({ ...next, cogs_amount: totalCogs, list_price: listPr, yearly_cost: listPr * (1 - disc / 100) })
+  }
 
   useEffect(() => {
     if (!product) return
+    const effectiveRate = product.rate_overridden ? product.base_rate : globalRate
     if (isUsageBased) {
-      const params = pricingMap[product.id]
-      if (!params) return
+      const unitPrice = parseFloat(item.unit_price) || 0
+      const cogsPerUnit = parseFloat(item.cogs_per_unit) || 0
       const { monthlyCost, totalRevenue, totalCogs, netRevenue } = calcJwxValues(
         item.monthly_quantity,
-        params.unit_price,
-        params.cogs_per_unit,
+        unitPrice,
+        cogsPerUnit,
         contractMonths
       )
       const commission = calcProductCommission({
         commission_metric: 'GM',
-        base_rate: product.base_rate,
+        base_rate: effectiveRate,
         net_revenue: netRevenue,
       })
       onChange({
@@ -37,130 +63,399 @@ function ProductRow({ item, products, pricingMap, contractMonths, onChange, onRe
         cogs_amount: totalCogs,
         net_revenue: netRevenue,
         commission_amount: commission,
-        unit_price_snapshot: params.unit_price,
-        cogs_per_unit_snapshot: params.cogs_per_unit,
+        unit_price_snapshot: unitPrice,
+        cogs_per_unit_snapshot: cogsPerUnit,
         commission_metric: product.commission_metric,
-        base_rate: product.base_rate,
+        base_rate: effectiveRate,
       })
     } else if (isGM) {
-      const revenue = (item.yearly_cost || 0) - (item.cogs_amount || 0)
+      let cogsAmt = parseFloat(item.cogs_amount) || 0
+      let yearlyCost = parseFloat(item.yearly_cost) || 0
+      const displayUpdates = {}
+      if (isQuantityBased) {
+        const qty = parseInt(item.quantity) || 0
+        cogsAmt = (parseFloat(item._cogs_per_item) || 0) * qty * contractMonths
+        const listPr = item._margin_type === 'percent'
+          ? cogsAmt * (1 + (parseFloat(item.markup_pct) || 0) / 100)
+          : (parseFloat(item._list_price_per_item) || 0) * qty * contractMonths
+        const disc = parseFloat(item.discount_pct) || 0
+        yearlyCost = listPr * (1 - disc / 100)
+        if (cogsAmt !== (parseFloat(item.cogs_amount) || 0) || listPr !== (parseFloat(item.list_price) || 0) || yearlyCost !== (parseFloat(item.yearly_cost) || 0)) {
+          displayUpdates.cogs_amount = cogsAmt
+          displayUpdates.list_price = listPr
+          displayUpdates.yearly_cost = yearlyCost
+        }
+      }
+      const netRev = yearlyCost - cogsAmt
       const commission = calcProductCommission({
         commission_metric: 'GM',
-        base_rate: product.base_rate,
-        net_revenue: revenue,
+        base_rate: effectiveRate,
+        net_revenue: netRev,
       })
-      onChange({ ...item, net_revenue: revenue, commission_amount: commission, commission_metric: product.commission_metric, base_rate: product.base_rate })
+      onChange({ ...item, ...displayUpdates, net_revenue: netRev, commission_amount: commission, commission_metric: product.commission_metric, base_rate: effectiveRate })
     } else {
-      const annual = (item.monthly_value || 0) * 12
-      const commission = calcProductCommission({
-        commission_metric: 'NAVC/RAV',
-        base_rate: product.base_rate,
-        annual_value: annual,
-      })
-      onChange({ ...item, annual_value: annual, commission_amount: commission, commission_metric: product.commission_metric, base_rate: product.base_rate })
+      const freq = product.billing_frequency || 'monthly'
+      if (freq === 'milestone') {
+        const totalValue = parseFloat(item._milestone_total) || 0
+        const commission = calcProductCommission({ commission_metric: 'NAVC/RAV', base_rate: effectiveRate, annual_value: totalValue })
+        if (totalValue !== (parseFloat(item.annual_value) || 0) || commission !== (parseFloat(item.commission_amount) || 0)) {
+          onChange({ ...item, annual_value: totalValue, commission_amount: commission, commission_metric: product.commission_metric, base_rate: effectiveRate })
+        }
+      } else {
+        const enteredValue = parseFloat(item.monthly_value) || 0
+        const effectiveMonths = parseInt(item.billing_months) || (freq === 'monthly' ? contractMonths : 1)
+        const annual = freq === 'monthly' ? enteredValue * effectiveMonths : enteredValue
+        const commission = calcProductCommission({ commission_metric: 'NAVC/RAV', base_rate: effectiveRate, annual_value: annual })
+        onChange({ ...item, annual_value: annual, commission_amount: commission, commission_metric: product.commission_metric, base_rate: effectiveRate })
+      }
     }
-  }, [item.product_id, item.monthly_quantity, item.monthly_value, item.yearly_cost, item.cogs_amount, contractMonths])
+  }, [item.product_id, item.monthly_quantity, item.unit_price, item.cogs_per_unit, item.monthly_value, item.yearly_cost, item.cogs_amount, item.discount_pct, item.quantity, item._milestone_total, item.billing_months, contractMonths, globalRate])
 
   return (
     <div className="border border-gray-100 rounded-xl p-4 space-y-3">
       <div className="flex items-start gap-2">
+        {vendors.length > 0 && (
+          <Select
+            className="w-36"
+            label="Vendor"
+            value={item._vendor_id || ''}
+            onChange={(e) => {
+              const vid = e.target.value
+              const currentProduct = products.find((p) => p.id === item.product_id)
+              const needsReset = vid && currentProduct?.vendor_id !== vid
+              onChange({ ...item, _vendor_id: vid, ...(needsReset ? { product_id: '', unit_price: '', cogs_per_unit: '', cogs_amount: '' } : {}) })
+            }}
+          >
+            <option value="">All</option>
+            {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </Select>
+        )}
         <Select
           className="flex-1"
           value={item.product_id}
-          onChange={(e) => onChange({ ...item, product_id: e.target.value })}
+          onChange={(e) => {
+            const newProductId = e.target.value
+            const defaults = pricingMap[newProductId]
+            const selectedProduct = products.find((p) => p.id === newProductId)
+            onChange({
+              ...item,
+              product_id: newProductId,
+              _vendor_id: selectedProduct?.vendor_id || item._vendor_id || '',
+              _margin_type: selectedProduct?.default_margin_type === 'percent' ? 'percent' : 'fixed',
+              _cogs_per_item: selectedProduct?.default_cogs || '',
+              _list_price_per_item: selectedProduct?.default_list_price || '',
+              markup_pct: selectedProduct?.default_margin_type === 'percent' ? (selectedProduct?.default_margin_pct || '') : '',
+              unit_price: defaults?.unit_price ?? '',
+              cogs_per_unit: defaults?.cogs_per_unit ?? '',
+              cogs_amount: selectedProduct?.quantity_label ? '' : (selectedProduct?.default_cogs || ''),
+              list_price: selectedProduct?.quantity_label ? '' : (selectedProduct?.default_list_price || ''),
+              quantity: '',
+              discount_pct: '',
+              yearly_cost: (!selectedProduct?.quantity_label && selectedProduct?.default_list_price)
+                ? parseFloat(selectedProduct.default_list_price)
+                : '',
+              milestones: [],
+              _milestone_total: 0,
+              billing_start_date: '',
+              billing_months: '',
+            })
+          }}
           label="Product"
         >
           <option value="">Select product...</option>
-          {products.map((p) => (
+          {filteredProducts.map((p) => (
             <option key={p.id} value={p.id}>{p.name} ({p.commission_metric})</option>
           ))}
         </Select>
+        <div className="mt-6 flex flex-col gap-0.5">
+          <button onClick={onMoveUp} disabled={isFirst} className="p-1.5 text-gray-400 hover:text-navy-900 hover:bg-gray-100 rounded disabled:opacity-20 disabled:cursor-not-allowed transition-colors">
+            <ChevronUp size={14} />
+          </button>
+          <button onClick={onMoveDown} disabled={isLast} className="p-1.5 text-gray-400 hover:text-navy-900 hover:bg-gray-100 rounded disabled:opacity-20 disabled:cursor-not-allowed transition-colors">
+            <ChevronDown size={14} />
+          </button>
+        </div>
         <button onClick={onRemove} className="mt-6 p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
           <Trash2 size={16} />
         </button>
       </div>
 
       {product && isUsageBased && (
-        <div className="grid grid-cols-2 gap-3">
-          <Input
-            label={`Monthly Quantity (${product.unit_label || 'Units'})`}
-            type="number"
-            min="0"
-            value={item.monthly_quantity || ''}
-            onChange={(e) => onChange({ ...item, monthly_quantity: parseFloat(e.target.value) || 0 })}
-          />
-          <div className="space-y-1">
-            <p className="text-xs font-medium text-gray-500">Calculated</p>
-            <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-xs">
-              <div className="flex justify-between">
-                <span className="text-gray-500">Revenue</span>
-                <span className="font-medium text-navy-900">{fmt(item.total_revenue)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">COGS</span>
-                <span className="font-medium text-red-600">-{fmt(item.cogs_amount)}</span>
-              </div>
-              <div className="flex justify-between border-t border-gray-200 pt-1 mt-1">
-                <span className="text-gray-600 font-medium">Net Revenue</span>
-                <span className="font-bold text-navy-900">{fmt(item.net_revenue)}</span>
-              </div>
-              <div className="flex justify-between text-primary-600">
-                <span>Commission (7%)</span>
-                <span className="font-bold">{fmt(item.commission_amount)}</span>
-              </div>
-            </div>
+        <div className="space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            <Input
+              label={`Monthly Qty (${product.unit_label || 'Units'})`}
+              commas
+              min="0"
+              value={item.monthly_quantity || ''}
+              onChange={(e) => onChange({ ...item, monthly_quantity: parseFloat(e.target.value) || 0 })}
+            />
+            <CurrencyInput
+              label={`Unit Price (per ${product.unit_label || 'unit'})`}
+              value={item.unit_price ?? ''}
+              onChange={(v) => onChange({ ...item, unit_price: v })}
+            />
+            <CurrencyInput
+              label={`COGS/Unit (per ${product.unit_label || 'unit'})`}
+              value={item.cogs_per_unit ?? ''}
+              onChange={(v) => onChange({ ...item, cogs_per_unit: v })}
+            />
           </div>
-        </div>
-      )}
-
-      {product && isGM && !isUsageBased && (
-        <div className="grid grid-cols-3 gap-3">
-          <Input
-            label="Yearly Revenue"
-            type="number"
-            min="0"
-            prefix="$"
-            value={item.yearly_cost || ''}
-            onChange={(e) => onChange({ ...item, yearly_cost: parseFloat(e.target.value) || 0 })}
-          />
-          <Input
-            label="COGS (total contract)"
-            type="number"
-            min="0"
-            prefix="$"
-            value={item.cogs_amount || ''}
-            onChange={(e) => onChange({ ...item, cogs_amount: parseFloat(e.target.value) || 0 })}
-          />
-          <div className="space-y-1">
-            <p className="text-xs font-medium text-gray-500">Commission</p>
-            <div className="bg-primary-50 rounded-lg p-3 text-xs">
+          <div className="bg-gray-50 rounded-lg p-3 grid grid-cols-4 gap-3 text-xs">
+            <div>
+              <p className="text-gray-500">Revenue</p>
+              <p className="font-medium text-navy-900 mt-0.5">{fmt(item.total_revenue, 2)}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">COGS</p>
+              <p className="font-medium text-navy-900 mt-0.5">{fmt(item.cogs_amount, 2)}</p>
+            </div>
+            <div>
               <p className="text-gray-500">Net Revenue</p>
-              <p className="font-semibold text-navy-900">{fmt(item.net_revenue)}</p>
-              <p className="text-primary-600 font-bold mt-1">{fmt(item.commission_amount)}</p>
+              <p className="font-bold text-navy-900 mt-0.5">{fmt(item.net_revenue, 2)}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Commission (7%)</p>
+              <p className="font-bold text-primary-600 mt-0.5">{fmt(item.commission_amount, 2)}</p>
             </div>
           </div>
         </div>
       )}
 
-      {product && !isGM && (
+      {product && isGM && !isUsageBased && !product.default_cogs && (
+        <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          No default pricing set for this product. Go to Products page to set Default COGS and List Price.
+        </p>
+      )}
+      {product && isGM && !isUsageBased && (
+        <div className="space-y-3">
+          {isQuantityBased && (
+            <div className="grid grid-cols-4 gap-3">
+              <Input
+                label={`Qty (${product.quantity_label})`}
+                type="number" min="1"
+                value={item.quantity || ''}
+                onChange={(e) => handleGMChange({ ...item, quantity: parseInt(e.target.value) || 0 })}
+              />
+              <CurrencyInput
+                label="COGS / Item"
+                value={item._cogs_per_item || ''}
+                onChange={(v) => handleGMChange({ ...item, _cogs_per_item: parseFloat(v) || 0 })}
+              />
+              {gmType === 'fixed' ? (
+                <CurrencyInput
+                  label="List Price / Item"
+                  value={item._list_price_per_item || ''}
+                  onChange={(v) => handleGMChange({ ...item, _list_price_per_item: parseFloat(v) || 0 })}
+                />
+              ) : (
+                <Input
+                  label="Markup %"
+                  type="number" min="0" step="0.1" suffix="%"
+                  value={item.markup_pct || ''}
+                  onChange={(e) => handleGMChange({ ...item, markup_pct: parseFloat(e.target.value) || 0 })}
+                />
+              )}
+              <Input
+                label="Discount %"
+                type="number" min="0" max="100" step="0.1" suffix="%"
+                value={item.discount_pct || ''}
+                onChange={(e) => handleGMChange({ ...item, discount_pct: parseFloat(e.target.value) || 0 })}
+              />
+            </div>
+          )}
+
+          {!isQuantityBased && (
+            <div className="grid grid-cols-4 gap-3">
+              <CurrencyInput
+                label="COGS"
+                value={item.cogs_amount || ''}
+                onChange={(v) => handleGMChange({ ...item, cogs_amount: parseFloat(v) || 0 })}
+              />
+              {gmType === 'fixed' ? (
+                <CurrencyInput
+                  label="List Price"
+                  hint="Fixed cost pricing"
+                  value={item.list_price || ''}
+                  onChange={(v) => handleGMChange({ ...item, list_price: parseFloat(v) || 0 })}
+                />
+              ) : (
+                <Input
+                  label="Markup %"
+                  type="number" min="0" step="0.1" suffix="%"
+                  hint={item.cogs_amount
+                    ? `List Price: ${fmt((parseFloat(item.cogs_amount) || 0) * (1 + (parseFloat(item.markup_pct) || 0) / 100), 2)}`
+                    : 'List Price = COGS × (1 + markup%)'}
+                  value={item.markup_pct || ''}
+                  onChange={(e) => handleGMChange({ ...item, markup_pct: parseFloat(e.target.value) || 0 })}
+                />
+              )}
+              <Input
+                label="Discount %"
+                type="number" min="0" max="100" step="0.1" suffix="%"
+                value={item.discount_pct || ''}
+                onChange={(e) => handleGMChange({ ...item, discount_pct: parseFloat(e.target.value) || 0 })}
+              />
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-gray-500">Commission</p>
+                <div className="bg-primary-50 rounded-lg p-3 text-xs">
+                  <p className="text-gray-500">Net Revenue</p>
+                  <p className="font-semibold text-navy-900">{fmt(item.net_revenue, 2)}</p>
+                  <p className="text-primary-600 font-bold mt-1">{fmt(item.commission_amount, 2)}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {(isQuantityBased || gmType === 'percent') && (
+            <div className="bg-gray-50 rounded-lg p-3 grid grid-cols-4 gap-3 text-xs">
+              <div>
+                <p className="text-gray-500">COGS</p>
+                <p className="font-medium text-navy-900 mt-0.5">{fmt(item.cogs_amount, 2)}</p>
+              </div>
+              <div>
+                <p className="text-gray-500">
+                  {gmType === 'percent'
+                    ? `List Price (×${(1 + (parseFloat(item.markup_pct) || 0) / 100).toFixed(2)})`
+                    : 'List Price'}
+                </p>
+                <p className="font-medium text-navy-900 mt-0.5">{fmt(item.list_price, 2)}</p>
+              </div>
+              <div>
+                <p className="text-gray-500">Revenue (after disc.)</p>
+                <p className="font-bold text-navy-900 mt-0.5">{fmt(item.yearly_cost, 2)}</p>
+              </div>
+              <div>
+                <p className="text-gray-500">Commission</p>
+                <p className="font-bold text-primary-600 mt-0.5">{fmt(item.commission_amount, 2)}</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {product && !isGM && product.billing_frequency === 'milestone' && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-gray-500">Payment Milestones</p>
+            <button
+              type="button"
+              onClick={() => {
+                const milestones = [...(item.milestones || []), { payment_date: '', amount: '', label: '' }]
+                const total = milestones.reduce((s, m) => s + (parseFloat(m.amount) || 0), 0)
+                onChange({ ...item, milestones, _milestone_total: total })
+              }}
+              className="text-xs text-primary-600 hover:text-primary-700 font-medium"
+            >
+              + Add Payment
+            </button>
+          </div>
+          {(item.milestones || []).length === 0 && (
+            <p className="text-xs text-gray-400 text-center py-3 border border-dashed border-gray-100 rounded-lg">No payments yet. Click "+ Add Payment" to define the payment schedule.</p>
+          )}
+          {(item.milestones || []).map((m, mi) => (
+            <div key={mi} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-end">
+              <Input
+                label={mi === 0 ? 'Payment Date' : undefined}
+                type="date"
+                value={m.payment_date || ''}
+                onChange={(e) => {
+                  const milestones = (item.milestones || []).map((x, j) => j === mi ? { ...x, payment_date: e.target.value } : x)
+                  onChange({ ...item, milestones })
+                }}
+              />
+              <CurrencyInput
+                label={mi === 0 ? 'Amount' : undefined}
+                value={m.amount ?? ''}
+                onChange={(v) => {
+                  const milestones = (item.milestones || []).map((x, j) => j === mi ? { ...x, amount: v } : x)
+                  const total = milestones.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0)
+                  onChange({ ...item, milestones, _milestone_total: total })
+                }}
+              />
+              <Input
+                label={mi === 0 ? 'Label (optional)' : undefined}
+                placeholder="e.g. Discovery Phase"
+                value={m.label || ''}
+                onChange={(e) => {
+                  const milestones = (item.milestones || []).map((x, j) => j === mi ? { ...x, label: e.target.value } : x)
+                  onChange({ ...item, milestones })
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const milestones = (item.milestones || []).filter((_, j) => j !== mi)
+                  const total = milestones.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0)
+                  onChange({ ...item, milestones, _milestone_total: total })
+                }}
+                className={`p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors ${mi === 0 ? 'self-end' : ''}`}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+          {(item.milestones || []).length > 0 && (
+            <div className="bg-primary-50 rounded-lg p-3 text-xs flex items-center justify-between">
+              <span className="text-gray-500">Total Value → Commission ({((product.base_rate || 0.07) * 100).toFixed(0)}%)</span>
+              <span className="font-bold text-primary-600">{fmt(item._milestone_total || 0, 2)} → {fmt(item.commission_amount || 0, 2)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {product && !isGM && product.billing_frequency !== 'milestone' && (
         <div className="grid grid-cols-2 gap-3">
-          <Input
-            label="Monthly Value"
-            type="number"
-            min="0"
-            prefix="$"
+          <CurrencyInput
+            label={product.billing_frequency === 'yearly' ? 'Annual Value' : product.billing_frequency === 'one_time' ? 'One-time Value' : 'Monthly Value'}
             value={item.monthly_value || ''}
-            onChange={(e) => onChange({ ...item, monthly_value: parseFloat(e.target.value) || 0 })}
+            onChange={(v) => onChange({ ...item, monthly_value: parseFloat(v) || 0 })}
           />
           <div className="space-y-1">
             <p className="text-xs font-medium text-gray-500">Commission (NAVC/RAV)</p>
             <div className="bg-primary-50 rounded-lg p-3 text-xs">
-              <p className="text-gray-500">Annual Value</p>
-              <p className="font-semibold text-navy-900">{fmt(item.annual_value)}</p>
-              <p className="text-primary-600 font-bold mt-1">{fmt(item.commission_amount)}</p>
+              <p className="text-gray-500">{product.billing_frequency === 'monthly' ? `Total Value (×${parseInt(item.billing_months) || contractMonths} mo)` : 'Total Value'}</p>
+              <p className="font-semibold text-navy-900">{fmt(item.annual_value, 2)}</p>
+              <p className="text-primary-600 font-bold mt-1">{fmt(item.commission_amount, 2)}</p>
             </div>
           </div>
         </div>
+      )}
+
+      {product && !isUsageBased && product.billing_frequency !== 'milestone' && (
+        <details className="group">
+          <summary className="text-xs text-gray-400 hover:text-gray-600 cursor-pointer select-none list-none flex items-center gap-1">
+            <span className="group-open:hidden">▸</span>
+            <span className="hidden group-open:inline">▾</span>
+            Override billing start for this product
+          </summary>
+          <div className="grid grid-cols-2 gap-3 mt-2">
+            <Input
+              label="Billing Start (override)"
+              type="date"
+              hint="Leave blank to use deal start"
+              value={item.billing_start_date || ''}
+              onChange={(e) => {
+                const newStart = e.target.value || ''
+                let derivedMonths = ''
+                if (newStart && contractEnd) {
+                  const s = new Date(newStart + 'T00:00:00')
+                  const en = new Date(contractEnd + 'T00:00:00')
+                  const m = (en.getFullYear() - s.getFullYear()) * 12 + (en.getMonth() - s.getMonth())
+                  if (m > 0) derivedMonths = m
+                }
+                onChange({ ...item, billing_start_date: newStart, billing_months: derivedMonths })
+              }}
+            />
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-gray-500">Billing Duration</p>
+              <div className="bg-gray-50 rounded-lg px-3 py-2.5 text-sm text-navy-900">
+                {item.billing_months ? `${item.billing_months} months` : `${contractMonths} months (deal default)`}
+              </div>
+              <p className="text-xs text-gray-400">Derived from start → deal end</p>
+            </div>
+          </div>
+        </details>
       )}
     </div>
   )
@@ -175,11 +470,14 @@ export default function NewDeal() {
   const [saving, setSaving] = useState(false)
   const [products, setProducts] = useState([])
   const [people, setPeople] = useState([])
+  const [companies, setCompanies] = useState([])
   const [pricingMap, setPricingMap] = useState({})
   const [spifTiers, setSpifTiers] = useState([])
+  const [globalRate, setGlobalRate] = useState(0.07)
 
   const [form, setForm] = useState({
     name: '',
+    company_id: '',
     company_name: '',
     stage: 'lead',
     deal_type: 'new',
@@ -195,15 +493,19 @@ export default function NewDeal() {
 
   useEffect(() => {
     async function loadRefs() {
-      const [{ data: prods }, { data: peeps }, { data: pricing }, { data: tiers }] = await Promise.all([
-        supabase.from('products').select('*').eq('active', true).order('name'),
+      const [{ data: prods }, { data: peeps }, { data: pricing }, { data: tiers }, { data: comps }, { data: settings }] = await Promise.all([
+        supabase.from('products').select('*, vendors(name)').eq('active', true).order('name'),
         supabase.from('people').select('*').eq('active', true).order('name'),
         supabase.from('product_pricing_params').select('*').order('effective_date', { ascending: false }),
         supabase.from('spif_tiers').select('*'),
+        supabase.from('companies').select('id, name').order('name'),
+        supabase.from('commission_settings').select('global_commission_rate').eq('id', 1).single(),
       ])
       setProducts(prods || [])
       setPeople(peeps || [])
+      setCompanies(comps || [])
       setSpifTiers(tiers || [])
+      if (settings) setGlobalRate(parseFloat(settings.global_commission_rate) || 0.07)
 
       // Latest pricing per product
       const pm = {}
@@ -217,6 +519,7 @@ export default function NewDeal() {
         if (deal) {
           setForm({
             name: deal.name || '',
+            company_id: deal.company_id || (comps || []).find((c) => c.name.toLowerCase() === deal.company_name?.toLowerCase())?.id || (deal.company_name ? 'other' : ''),
             company_name: deal.company_name || '',
             stage: deal.stage || 'lead',
             deal_type: deal.deal_type || 'new',
@@ -232,7 +535,34 @@ export default function NewDeal() {
           .from('deal_products')
           .select('*, products(*)')
           .eq('deal_id', editId)
-        setDealProducts((dps || []).map((dp) => ({ ...dp, product_id: dp.product_id })))
+        let milestonesData = []
+        if (dps && dps.length > 0) {
+          const { data: ms } = await supabase
+            .from('deal_product_milestones')
+            .select('*')
+            .in('deal_product_id', dps.map((dp) => dp.id))
+            .order('sort_order')
+          milestonesData = ms || []
+        }
+        setDealProducts((dps || []).map((dp) => {
+          const prod = (prods || []).find((p) => p.id === dp.product_id)
+          const qty = parseInt(dp.quantity) || 0
+          const months = deal?.contract_months || 12
+          const isQtyBased = !!prod?.quantity_label
+          return {
+            ...dp,
+            unit_price: dp.unit_price_snapshot ?? '',
+            cogs_per_unit: dp.cogs_per_unit_snapshot ?? '',
+            _vendor_id: prod?.vendor_id || '',
+            _margin_type: prod?.default_margin_type === 'percent' ? 'percent' : 'fixed',
+            _cogs_per_item: isQtyBased && qty > 0 ? (dp.cogs_amount || 0) / qty / months : (prod?.default_cogs || ''),
+            _list_price_per_item: isQtyBased && qty > 0 ? (dp.list_price || 0) / qty / months : (prod?.default_list_price || ''),
+            milestones: milestonesData.filter((m) => m.deal_product_id === dp.id),
+            _milestone_total: milestonesData.filter((m) => m.deal_product_id === dp.id).reduce((s, m) => s + (parseFloat(m.amount) || 0), 0),
+            billing_start_date: dp.billing_start_date || '',
+            billing_months: dp.billing_months || '',
+          }
+        }))
 
         const { data: team } = await supabase
           .from('deal_team')
@@ -248,16 +578,40 @@ export default function NewDeal() {
     loadRefs()
   }, [editId])
 
+  const vendors = [...new Map(
+    products.filter((p) => p.vendor_id && p.vendors?.name)
+      .map((p) => [p.vendor_id, { id: p.vendor_id, name: p.vendors.name }])
+  ).values()].sort((a, b) => a.name.localeCompare(b.name))
+
   const acv = parseFloat(form.acv) || 0
   const totalCommission = dealProducts.reduce((s, dp) => s + (dp.commission_amount || 0), 0)
   const totalAllocated = teamMembers.filter((m) => m.role === 'sales').reduce((s, m) => s + (m.commission_percent || 0), 0)
 
   function addProduct() {
-    setDealProducts((prev) => [...prev, { _id: Date.now(), product_id: '', commission_amount: 0 }])
+    setDealProducts((prev) => [...prev, { _id: Date.now(), product_id: '', commission_amount: 0, milestones: [], _milestone_total: 0, billing_start_date: '', billing_months: '' }])
   }
+
+  useEffect(() => {
+    if (form.contract_start && form.contract_end) {
+      const start = new Date(form.contract_start)
+      const end = new Date(form.contract_end)
+      const months = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth())
+      if (months > 0) setForm((f) => ({ ...f, contract_months: months }))
+    }
+  }, [form.contract_start, form.contract_end])
 
   function removeProduct(index) {
     setDealProducts((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function moveProduct(index, dir) {
+    setDealProducts((prev) => {
+      const next = [...prev]
+      const target = index + dir
+      if (target < 0 || target >= next.length) return prev
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return next
+    })
   }
 
   function addTeamMember() {
@@ -266,6 +620,19 @@ export default function NewDeal() {
 
   function removeTeamMember(index) {
     setTeamMembers((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  async function saveNewCompany() {
+    if (!form.company_name.trim()) return
+    const { data } = await supabase
+      .from('companies')
+      .insert([{ name: form.company_name.trim() }])
+      .select()
+      .single()
+    if (data) {
+      setCompanies((prev) => [...prev, { id: data.id, name: data.name }].sort((a, b) => a.name.localeCompare(b.name)))
+      setForm((f) => ({ ...f, company_id: data.id, company_name: data.name }))
+    }
   }
 
   function updateTeamMember(index, updates) {
@@ -285,14 +652,23 @@ export default function NewDeal() {
   }
 
   async function handleSave() {
-    if (!form.name || !form.company_name) return
+    if (!form.name || !form.company_name || !form.company_id) return
     setSaving(true)
 
+    const months = parseInt(form.contract_months) || 12
     const dealData = {
-      ...form,
+      name: form.name,
+      company_id: (form.company_id && form.company_id !== 'other') ? form.company_id : null,
+      company_name: form.company_name,
+      stage: form.stage,
+      deal_type: form.deal_type,
+      is_tbn_property: form.is_tbn_property,
+      contract_start: form.contract_start || null,
+      contract_end: form.contract_end || null,
+      contract_months: months,
       acv: acv || null,
-      contract_months: parseInt(form.contract_months) || 12,
-      total_contract_value: acv * (parseInt(form.contract_months) || 12) / 12,
+      total_contract_value: acv ? acv * months / 12 : null,
+      notes: form.notes || null,
       updated_at: new Date().toISOString(),
     }
 
@@ -302,20 +678,43 @@ export default function NewDeal() {
       await supabase.from('deal_products').delete().eq('deal_id', editId)
       await supabase.from('deal_team').delete().eq('deal_id', editId)
     } else {
-      const { data } = await supabase.from('deals').insert([dealData]).select().single()
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.user?.email) dealData.created_by = session.user.email
+      const { data, error } = await supabase.from('deals').insert([dealData]).select().single()
+      if (error || !data) {
+        console.error('Deal insert failed:', error)
+        setSaving(false)
+        return
+      }
       dealId = data.id
     }
 
-    // Insert products
-    const dpRows = dealProducts
-      .filter((dp) => dp.product_id)
-      .map(({ _id, products: _, ...dp }) => ({ ...dp, deal_id: dealId }))
-    if (dpRows.length) await supabase.from('deal_products').insert(dpRows)
+    // Insert products — strip local-only fields and existing id before re-inserting
+    const dpToInsert = dealProducts.filter((dp) => dp.product_id)
+    const dpRows = dpToInsert.map(({ _id, _vendor_id, _margin_type, _margin_pct, _cogs_per_item, _list_price_per_item, id: _dbId, products: _, unit_price, cogs_per_unit, milestones: _milestones, _milestone_total, ...dp }) => {
+      const row = { ...dp, deal_id: dealId }
+      return Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v === '' ? null : v]))
+    })
+    if (dpRows.length) {
+      const { data: insertedDPs, error: dpErr } = await supabase.from('deal_products').insert(dpRows).select()
+      if (dpErr) console.error('deal_products insert failed:', JSON.stringify(dpErr))
+      if (insertedDPs) {
+        const milestoneRows = []
+        insertedDPs.forEach((insertedDP, i) => {
+          ;(dpToInsert[i].milestones || []).forEach((m, j) => {
+            if (m.payment_date && (parseFloat(m.amount) || 0) > 0) {
+              milestoneRows.push({ deal_product_id: insertedDP.id, payment_date: m.payment_date, amount: parseFloat(m.amount), label: m.label || null, sort_order: j })
+            }
+          })
+        })
+        if (milestoneRows.length) await supabase.from('deal_product_milestones').insert(milestoneRows)
+      }
+    }
 
-    // Insert team
+    // Insert team — strip local-only fields and existing id
     const teamRows = teamMembers
       .filter((m) => m.person_id)
-      .map(({ _id, people: _, ...m }) => ({ ...m, deal_id: dealId }))
+      .map(({ _id, id: _dbId, people: _, ...m }) => ({ ...m, deal_id: dealId }))
     if (teamRows.length) await supabase.from('deal_team').insert(teamRows)
 
     navigate(`/deals/${dealId}`)
@@ -339,7 +738,51 @@ export default function NewDeal() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input label="Deal Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required placeholder="e.g., Acme Corp — Backstage Platform" />
-            <Input label="Company Name" value={form.company_name} onChange={(e) => setForm({ ...form, company_name: e.target.value })} required />
+            <div className="space-y-2">
+              <Select
+                label="Company"
+                value={form.company_id}
+                onChange={(e) => {
+                  const val = e.target.value
+                  if (val === 'other') {
+                    setForm({ ...form, company_id: 'other', company_name: '' })
+                  } else if (val === '') {
+                    setForm({ ...form, company_id: '', company_name: '' })
+                  } else {
+                    const co = companies.find((c) => c.id === val)
+                    setForm({ ...form, company_id: val, company_name: co?.name || '' })
+                  }
+                }}
+                required
+              >
+                <option value="">Select a company...</option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+                <option value="other">+ Not listed (type manually)</option>
+              </Select>
+              {form.company_id === 'other' && (
+                <div className="flex gap-2 items-center">
+                  <Input
+                    className="flex-1"
+                    placeholder="Enter company name"
+                    value={form.company_name}
+                    onChange={(e) => setForm({ ...form, company_name: e.target.value })}
+                    required
+                  />
+                  {form.company_name.trim() && (
+                    <button
+                      type="button"
+                      onClick={saveNewCompany}
+                      className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2.5 rounded-lg bg-primary-50 text-primary-700 text-xs font-medium hover:bg-primary-100 border border-primary-200 transition-colors whitespace-nowrap"
+                    >
+                      <Plus size={12} />
+                      Save to Companies
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Select label="Stage" value={form.stage} onChange={(e) => setForm({ ...form, stage: e.target.value })}>
@@ -348,12 +791,21 @@ export default function NewDeal() {
             <Select label="Deal Type" value={form.deal_type} onChange={(e) => setForm({ ...form, deal_type: e.target.value })}>
               {DEAL_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </Select>
-            <Input label="ACV (Annual Contract Value)" type="number" prefix="$" value={form.acv} onChange={(e) => setForm({ ...form, acv: e.target.value })} />
+            <CurrencyInput label="Estimated ACV" hint="Manual estimate — overridden by product totals" value={form.acv} onChange={(v) => setForm({ ...form, acv: v })} />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Input label="Contract Start" type="date" value={form.contract_start} onChange={(e) => setForm({ ...form, contract_start: e.target.value })} />
             <Input label="Contract End" type="date" value={form.contract_end} onChange={(e) => setForm({ ...form, contract_end: e.target.value })} />
-            <Input label="Contract Length (Months)" type="number" min="1" value={form.contract_months} onChange={(e) => setForm({ ...form, contract_months: e.target.value })} />
+            <Input
+              label="Contract Length (Months)"
+              type="number"
+              min="1"
+              value={form.contract_months}
+              onChange={(e) => setForm({ ...form, contract_months: e.target.value })}
+              readOnly={!!(form.contract_start && form.contract_end)}
+              hint={form.contract_start && form.contract_end ? 'Calculated from dates' : undefined}
+              className={form.contract_start && form.contract_end ? 'opacity-75' : ''}
+            />
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -373,8 +825,7 @@ export default function NewDeal() {
       <Card>
         <CardHeader
           title="Products & Services"
-          subtitle={`Total Commission: ${fmt(totalCommission)}`}
-          action={<Button size="sm" variant="secondary" onClick={addProduct} icon={<Plus size={14} />}>Add Product</Button>}
+          subtitle={`Total Commission: ${fmt(totalCommission, 2)}`}
         />
         <div className="space-y-3">
           {dealProducts.length === 0 && (
@@ -387,12 +838,28 @@ export default function NewDeal() {
               key={item.id || item._id}
               item={item}
               products={products}
+              vendors={vendors}
               pricingMap={pricingMap}
               contractMonths={parseInt(form.contract_months) || 12}
+              globalRate={globalRate}
+              contractEnd={form.contract_end || (() => {
+                if (form.contract_start && form.contract_months) {
+                  const d = new Date(form.contract_start + 'T00:00:00')
+                  d.setMonth(d.getMonth() + (parseInt(form.contract_months) || 12))
+                  d.setDate(d.getDate() - 1)
+                  return d.toISOString().split('T')[0]
+                }
+                return null
+              })()}
               onChange={(updated) => setDealProducts((prev) => { const n = [...prev]; n[i] = updated; return n })}
               onRemove={() => removeProduct(i)}
+              onMoveUp={() => moveProduct(i, -1)}
+              onMoveDown={() => moveProduct(i, 1)}
+              isFirst={i === 0}
+              isLast={i === dealProducts.length - 1}
             />
           ))}
+          <Button size="sm" variant="secondary" onClick={addProduct} icon={<Plus size={14} />}>Add Product</Button>
         </div>
       </Card>
 
@@ -446,7 +913,7 @@ export default function NewDeal() {
                     <div className="space-y-1">
                       <p className="text-xs font-medium text-navy-900">SPIF Amount</p>
                       <div className="bg-accent-50 border border-accent-200 rounded-lg px-3 py-2.5 text-sm font-bold text-navy-900">
-                        {fmt(member.spif_amount || 0)}
+                        {fmt(member.spif_amount || 0, 2)}
                       </div>
                     </div>
                   )}

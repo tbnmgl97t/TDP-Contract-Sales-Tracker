@@ -28,14 +28,25 @@ function StatCard({ label, value, sub, icon: Icon, color }) {
 export default function Dashboard() {
   const [deals, setDeals] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const navigate = useNavigate()
 
   useEffect(() => {
     async function load() {
-      const { data } = await supabase
+      let { data, error: err } = await supabase
         .from('deals')
         .select('id, name, company_name, stage, acv, total_contract_value, created_at')
+        .is('deleted_at', null)
         .order('created_at', { ascending: false })
+      if (err) {
+        // Fallback if deleted_at column doesn't exist yet
+        const { data: fallback, error: err2 } = await supabase
+          .from('deals')
+          .select('id, name, company_name, stage, acv, total_contract_value, created_at')
+          .order('created_at', { ascending: false })
+        if (err2) { setError('Failed to load dashboard data. Please refresh.'); setLoading(false); return }
+        data = fallback
+      }
       setDeals(data || [])
       setLoading(false)
     }
@@ -43,6 +54,12 @@ export default function Dashboard() {
   }, [])
 
   if (loading) return <PageSpinner />
+  if (error) return (
+    <div className="flex flex-col items-center justify-center py-20 gap-3">
+      <p className="text-sm font-medium text-red-600">{error}</p>
+      <button onClick={() => window.location.reload()} className="text-xs text-primary-500 hover:text-primary-600 underline">Refresh</button>
+    </div>
+  )
 
   const activeDeals = deals.filter((d) => d.stage !== 'closed_lost')
   const contracted = deals.filter((d) => d.stage === 'contracted')
@@ -74,14 +91,14 @@ export default function Dashboard() {
         />
         <StatCard
           label="Pipeline ACV"
-          value={fmt(totalPipeline)}
+          value={fmt(totalPipeline, 2)}
           sub="Annual contract value"
           icon={TrendingUp}
           color="bg-navy-900"
         />
         <StatCard
           label="Contracted"
-          value={fmt(totalContracted)}
+          value={fmt(totalContracted, 2)}
           sub={`${contracted.length} deals`}
           icon={DollarSign}
           color="bg-accent-400"
@@ -114,7 +131,7 @@ export default function Dashboard() {
                 </div>
                 <div className="flex items-center gap-3 text-sm flex-shrink-0">
                   <span className="text-gray-500 w-5 text-right">{s.count}</span>
-                  <span className="font-medium text-navy-900 w-20 text-right">{fmt(s.value)}</span>
+                  <span className="font-medium text-navy-900 w-20 text-right">{fmt(s.value, 2)}</span>
                 </div>
               </div>
             )
@@ -158,7 +175,7 @@ export default function Dashboard() {
               </div>
               <div className="flex items-center gap-3 ml-3 flex-shrink-0">
                 <StageBadge stage={deal.stage} />
-                <span className="text-sm font-semibold text-navy-900">{fmt(deal.acv)}</span>
+                <span className="text-sm font-semibold text-navy-900">{fmt(deal.acv, 2)}</span>
               </div>
             </button>
           ))}

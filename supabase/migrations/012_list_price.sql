@@ -1,0 +1,2 @@
+ALTER TABLE products ADD COLUMN IF NOT EXISTS default_list_price DECIMAL(12,2);
+ALTER TABLE deal_products ADD COLUMN IF NOT EXISTS list_price DECIMAL(12,2);

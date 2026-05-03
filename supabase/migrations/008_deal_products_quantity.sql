@@ -1,0 +1,1 @@
+ALTER TABLE deal_products ADD COLUMN IF NOT EXISTS quantity DECIMAL(10,2);

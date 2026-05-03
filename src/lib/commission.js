@@ -55,45 +55,97 @@ export function calcSpif(acv, spifTiers = []) {
   return tier ? Number(tier.spif_amount) : 0
 }
 
+function parseContractDate(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+function buildCalQuarters(startDate, endDate) {
+  const quarters = []
+  let cursor = new Date(startDate.getFullYear(), Math.floor(startDate.getMonth() / 3) * 3, 1)
+  while (cursor <= endDate) {
+    const qYear = cursor.getFullYear()
+    const qIdx = Math.floor(cursor.getMonth() / 3)
+    const qStart = new Date(qYear, qIdx * 3, 1)
+    const qEnd = new Date(qYear, qIdx * 3 + 3, 0)
+    const overlapStart = startDate > qStart ? startDate : qStart
+    const overlapEnd = endDate < qEnd ? endDate : qEnd
+    const days = Math.round((overlapEnd - overlapStart) / 86400000) + 1
+    quarters.push({ year: qYear, quarter: qIdx + 1, days })
+    cursor = new Date(qYear, qIdx * 3 + 3, 1)
+  }
+  return quarters
+}
+
 /**
  * Build the full quarterly commission schedule for a deal.
  *
- * SPIF rule: paid one-time in the quarter FOLLOWING contract start.
- * Commission rule: total annual commission minus total SPIFs, paid quarterly.
+ * Commission is calculated per product. Each product can use:
+ *  - Milestone billing: commission distributed proportionally to milestone payment dates
+ *  - Per-product date overrides: billing_start_date / billing_months override deal dates
+ *  - Default: prorated by calendar quarter using deal dates
  *
- * @param {object} deal - { contract_start, contract_months, acv, is_tbn_property }
- * @param {array}  dealProducts - [{ commission_amount, ... }]
- * @param {array}  dealTeam     - [{ person_id, role, commission_percent, spif_amount }]
+ * SPIF rule: paid in the same quarter as contract execution.
+ *
+ * @param {object} deal        - { contract_start, contract_months, is_tbn_property }
+ * @param {array}  dealProducts - [{ commission_amount, milestones?, billing_start_date?, billing_months?, ... }]
+ * @param {array}  dealTeam    - [{ person_id, role, commission_percent, spif_amount, person_name }]
  * @returns {array} schedule entries [{ quarter, year, person_id, type, amount }]
  */
 export function buildCommissionSchedule(deal, dealProducts, dealTeam) {
   if (deal.is_tbn_property) return []
 
-  const totalAnnualCommission = dealProducts.reduce(
-    (sum, p) => sum + (p.commission_amount || 0),
-    0
-  )
-
-  const months = deal.contract_months || 12
-  const quarters = Math.ceil(months / 3)
-  const startDate = deal.contract_start ? new Date(deal.contract_start) : new Date()
-
   const salesTeam = dealTeam.filter((m) => m.role === 'sales')
-  const supportTeam = dealTeam.filter((m) => m.role === 'support')
+  const totalSpif = dealTeam.reduce((sum, m) => sum + (m.spif_amount || 0), 0)
 
-  const totalSpif = supportTeam.reduce((sum, m) => sum + (m.spif_amount || 0), 0)
-  const netAnnualCommission = Math.max(0, totalAnnualCommission - totalSpif)
-  const quarterlyCommission = netAnnualCommission / 4
+  const dealStartDate = deal.contract_start ? parseContractDate(deal.contract_start) : new Date()
+  const spifCalYear = dealStartDate.getFullYear()
+  const spifCalQuarter = Math.floor(dealStartDate.getMonth() / 3) + 1
+
+  // Accumulate commission per calendar quarter across all products
+  const quarterMap = {}
+  function addToQuarter(year, quarter, amount) {
+    const key = `${year}-${quarter}`
+    if (!quarterMap[key]) quarterMap[key] = { year, quarter, amount: 0 }
+    quarterMap[key].amount += amount
+  }
+
+  dealProducts.forEach((dp) => {
+    const productCommission = dp.commission_amount || 0
+    if (productCommission <= 0) return
+
+    const milestones = dp.milestones || []
+
+    if (milestones.length > 0) {
+      const totalMilestoneAmt = milestones.reduce((s, m) => s + (parseFloat(m.amount) || 0), 0)
+      if (totalMilestoneAmt <= 0) return
+      milestones.forEach((m) => {
+        if (!m.payment_date) return
+        const date = parseContractDate(m.payment_date)
+        const quarter = Math.floor(date.getMonth() / 3) + 1
+        const year = date.getFullYear()
+        const fraction = (parseFloat(m.amount) || 0) / totalMilestoneAmt
+        addToQuarter(year, quarter, productCommission * fraction)
+      })
+    } else {
+      const startDate = dp.billing_start_date ? parseContractDate(dp.billing_start_date) : dealStartDate
+      const months = dp.billing_months || deal.contract_months || 12
+      const endDate = new Date(startDate)
+      endDate.setMonth(endDate.getMonth() + months)
+      endDate.setDate(endDate.getDate() - 1)
+
+      const calQuarters = buildCalQuarters(startDate, endDate)
+      const totalDays = calQuarters.reduce((s, q) => s + q.days, 0)
+      calQuarters.forEach(({ year, quarter, days }) => {
+        addToQuarter(year, quarter, productCommission * (days / totalDays))
+      })
+    }
+  })
 
   const schedule = []
 
-  // SPIFs paid in Q+1 (quarter following contract execution) — one-time
-  const spifDate = new Date(startDate)
-  spifDate.setMonth(spifDate.getMonth() + 3)
-  const spifCalYear = spifDate.getFullYear()
-  const spifCalQuarter = Math.floor(spifDate.getMonth() / 3) + 1
-
-  supportTeam.forEach((member) => {
+  // SPIFs paid in execution quarter
+  dealTeam.forEach((member) => {
     const amt = member.spif_amount || 0
     if (amt > 0) {
       schedule.push({
@@ -101,36 +153,34 @@ export function buildCommissionSchedule(deal, dealProducts, dealTeam) {
         year: spifCalYear,
         person_id: member.person_id,
         person_name: member.person_name,
-        role: 'support',
+        role: member.role,
         type: 'spif',
         amount: amt,
       })
     }
   })
 
-  // Quarterly commissions for sales team
-  for (let q = 0; q < quarters; q++) {
-    const qDate = new Date(startDate)
-    qDate.setMonth(qDate.getMonth() + q * 3)
-    const calYear = qDate.getFullYear()
-    const calQuarter = Math.floor(qDate.getMonth() / 3) + 1
+  // Commission entries per quarter
+  Object.values(quarterMap).forEach(({ year, quarter, amount }) => {
+    const isSpifQuarter = year === spifCalYear && quarter === spifCalQuarter
+    const distributable = isSpifQuarter ? Math.max(0, amount - totalSpif) : amount
 
     salesTeam.forEach((member) => {
       const allocation = (member.commission_percent || 0) / 100
-      const amount = quarterlyCommission * allocation
+      const memberAmount = Math.max(0, distributable * allocation)
       if (allocation > 0) {
         schedule.push({
-          quarter: calQuarter,
-          year: calYear,
+          quarter,
+          year,
           person_id: member.person_id,
           person_name: member.person_name,
           role: 'sales',
           type: 'commission',
-          amount,
+          amount: memberAmount,
         })
       }
     })
-  }
+  })
 
   return schedule
 }
