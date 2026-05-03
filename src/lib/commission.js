@@ -29,11 +29,19 @@ export function calcProductCommission(dp) {
  * @param {number} unitPrice       - revenue per unit (from product_pricing_params)
  * @param {number} cogsPerUnit     - COGS per unit (from product_pricing_params)
  * @param {number} contractMonths  - length of contract in months
+ * @param {string} billingMode     - 'monthly' (qty×price×months) or 'fixed' (qty×price = total)
  * @returns {{ monthlyCost, totalRevenue, totalCogs, netRevenue }}
  */
-export function calcJwxValues(monthlyQuantity, unitPrice, cogsPerUnit, contractMonths) {
+export function calcJwxValues(monthlyQuantity, unitPrice, cogsPerUnit, contractMonths, billingMode) {
   const qty = monthlyQuantity || 0
   const months = contractMonths || 12
+  if (billingMode === 'fixed') {
+    const totalRevenue = qty * (unitPrice || 0)
+    const totalCogs = qty * (cogsPerUnit || 0)
+    const monthlyCost = months > 0 ? totalRevenue / months : 0
+    const netRevenue = Math.max(0, totalRevenue - totalCogs)
+    return { monthlyCost, totalRevenue, totalCogs, netRevenue }
+  }
   const monthlyCost = qty * (unitPrice || 0)
   const totalRevenue = monthlyCost * months
   const totalCogs = qty * (cogsPerUnit || 0) * months

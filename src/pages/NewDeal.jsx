@@ -10,10 +10,12 @@ import { DEAL_STAGES, DEAL_TYPES } from '../lib/constants'
 import { calcJwxValues, calcProductCommission, calcSpif, fmt } from '../lib/commission'
 import { PageSpinner } from '../components/ui/Spinner'
 
-function ProductRow({ item, products, vendors, pricingMap, contractMonths, contractEnd, globalRate, onChange, onRemove, onMoveUp, onMoveDown, isFirst, isLast }) {
+function ProductRow({ item, allItems, products, vendors, pricingMap, contractMonths, contractEnd, globalRate, onChange, onRemove, onMoveUp, onMoveDown, isFirst, isLast }) {
   const product = products.find((p) => p.id === item.product_id)
   const isUsageBased = product?.is_usage_based
   const isGM = product?.commission_metric === 'GM'
+  const isSupportCharge = product?.is_support_charge
+  const billingMode = item.billing_mode || 'monthly'
   const filteredProducts = item._vendor_id ? products.filter((p) => p.vendor_id === item._vendor_id) : products
 
   // GM non-usage helpers
@@ -40,7 +42,7 @@ function ProductRow({ item, products, vendors, pricingMap, contractMonths, contr
   }
 
   useEffect(() => {
-    if (!product) return
+    if (!product || isSupportCharge) return
     const effectiveRate = product.rate_overridden ? product.base_rate : globalRate
     if (isUsageBased) {
       const unitPrice = parseFloat(item.unit_price) || 0
@@ -49,7 +51,8 @@ function ProductRow({ item, products, vendors, pricingMap, contractMonths, contr
         item.monthly_quantity,
         unitPrice,
         cogsPerUnit,
-        contractMonths
+        contractMonths,
+        billingMode
       )
       const commission = calcProductCommission({
         commission_metric: 'GM',
@@ -109,7 +112,33 @@ function ProductRow({ item, products, vendors, pricingMap, contractMonths, contr
         onChange({ ...item, annual_value: annual, commission_amount: commission, commission_metric: product.commission_metric, base_rate: effectiveRate })
       }
     }
-  }, [item.product_id, item.monthly_quantity, item.unit_price, item.cogs_per_unit, item.monthly_value, item.yearly_cost, item.cogs_amount, item.discount_pct, item.quantity, item._milestone_total, item.billing_months, contractMonths, globalRate])
+  }, [item.product_id, item.monthly_quantity, item.unit_price, item.cogs_per_unit, item.monthly_value, item.yearly_cost, item.cogs_amount, item.discount_pct, item.quantity, item._milestone_total, item.billing_months, item.billing_mode, contractMonths, globalRate])
+
+  // Support charge: auto-calculate revenue from selected line items
+  useEffect(() => {
+    if (!product?.is_support_charge) return
+    const effectiveRate = product.rate_overridden ? product.base_rate : globalRate
+    const pct = parseFloat(item.support_pct) ?? parseFloat(product.default_support_pct) ?? 15
+    const selectedPids = item.support_product_ids || []
+    const itemKey = item._id || item.id
+    const baseRevenue = allItems
+      .filter((dp) => {
+        const key = dp._id || dp.id
+        return key !== itemKey && dp.product_id && selectedPids.includes(dp.product_id)
+      })
+      .reduce((sum, dp) => {
+        const dpProd = products.find((p) => p.id === dp.product_id)
+        if (!dpProd) return sum
+        if (dpProd.is_usage_based) return sum + (dp.total_revenue || 0)
+        if (dpProd.commission_metric === 'GM') return sum + (dp.yearly_cost || 0)
+        return sum + (dp.annual_value || 0)
+      }, 0)
+    const revenue = baseRevenue * (pct / 100)
+    const commission = calcProductCommission({ commission_metric: 'NAVC/RAV', base_rate: effectiveRate, annual_value: revenue })
+    if (Math.abs(revenue - (item.annual_value || 0)) > 0.001 || Math.abs(commission - (item.commission_amount || 0)) > 0.001) {
+      onChange({ ...item, annual_value: revenue, commission_amount: commission, commission_metric: 'NAVC/RAV', base_rate: effectiveRate })
+    }
+  }, [item.product_id, item.support_pct, JSON.stringify(item.support_product_ids), allItems, globalRate])
 
   return (
     <div className="border border-gray-100 rounded-xl p-4 space-y-3">
@@ -158,6 +187,9 @@ function ProductRow({ item, products, vendors, pricingMap, contractMonths, contr
               _milestone_total: 0,
               billing_start_date: '',
               billing_months: '',
+              billing_mode: 'monthly',
+              support_pct: selectedProduct?.is_support_charge ? (selectedProduct?.default_support_pct ?? 15) : '',
+              support_product_ids: selectedProduct?.is_support_charge ? (item.support_product_ids || []) : [],
             })
           }}
           label="Product"
@@ -182,9 +214,24 @@ function ProductRow({ item, products, vendors, pricingMap, contractMonths, contr
 
       {product && isUsageBased && (
         <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-gray-500">Billing Mode</span>
+            <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs">
+              {[{ value: 'monthly', label: 'Monthly × Duration' }, { value: 'fixed', label: 'Fixed Contract Total' }].map(({ value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => onChange({ ...item, billing_mode: value })}
+                  className={`px-3 py-1.5 transition-colors ${billingMode === value ? 'bg-primary-50 text-primary-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="grid grid-cols-3 gap-3">
             <Input
-              label={`Monthly Qty (${product.unit_label || 'Units'})`}
+              label={`${billingMode === 'fixed' ? 'Contract' : 'Monthly'} Qty (${product.unit_label || 'Units'})`}
               commas
               min="0"
               value={item.monthly_quantity || ''}
@@ -203,8 +250,9 @@ function ProductRow({ item, products, vendors, pricingMap, contractMonths, contr
           </div>
           <div className="bg-gray-50 rounded-lg p-3 grid grid-cols-4 gap-3 text-xs">
             <div>
-              <p className="text-gray-500">Revenue</p>
+              <p className="text-gray-500">{billingMode === 'fixed' ? 'Contract Total' : 'Revenue'}</p>
               <p className="font-medium text-navy-900 mt-0.5">{fmt(item.total_revenue, 2)}</p>
+              {billingMode === 'fixed' && <p className="text-gray-400 mt-0.5">{fmt(item.monthly_cost, 2)}/mo</p>}
             </div>
             <div>
               <p className="text-gray-500">COGS</p>
@@ -215,8 +263,72 @@ function ProductRow({ item, products, vendors, pricingMap, contractMonths, contr
               <p className="font-bold text-navy-900 mt-0.5">{fmt(item.net_revenue, 2)}</p>
             </div>
             <div>
-              <p className="text-gray-500">Commission (7%)</p>
+              <p className="text-gray-500">Commission</p>
               <p className="font-bold text-primary-600 mt-0.5">{fmt(item.commission_amount, 2)}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {product && isSupportCharge && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="Support %"
+              type="number" min="0" max="100" step="0.1" suffix="%"
+              value={item.support_pct ?? (product.default_support_pct ?? 15)}
+              onChange={(e) => onChange({ ...item, support_pct: parseFloat(e.target.value) || 0 })}
+            />
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-gray-500">Calculated Revenue</p>
+              <div className="bg-primary-50 rounded-lg p-3 text-xs">
+                <p className="font-bold text-primary-600">{fmt(item.annual_value || 0, 2)}</p>
+                <p className="text-gray-500 mt-0.5">Commission: {fmt(item.commission_amount || 0, 2)}</p>
+              </div>
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-gray-500 mb-1.5">Apply to line items</p>
+            <div className="border border-gray-100 rounded-lg divide-y divide-gray-50">
+              {allItems
+                .filter((dp) => {
+                  const key = dp._id || dp.id
+                  const selfKey = item._id || item.id
+                  const dpProd = products.find((p) => p.id === dp.product_id)
+                  return key !== selfKey && dp.product_id && !dpProd?.is_support_charge
+                })
+                .map((dp) => {
+                  const dpProd = products.find((p) => p.id === dp.product_id)
+                  if (!dpProd) return null
+                  const isSelected = (item.support_product_ids || []).includes(dp.product_id)
+                  const dpRevenue = dpProd.is_usage_based
+                    ? (dp.total_revenue || 0)
+                    : dpProd.commission_metric === 'GM' ? (dp.yearly_cost || 0) : (dp.annual_value || 0)
+                  return (
+                    <label key={dp._id || dp.id} className="flex items-center gap-2.5 px-3 py-2.5 cursor-pointer hover:bg-gray-50 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={(e) => {
+                          const pid = dp.product_id
+                          const current = item.support_product_ids || []
+                          const next = e.target.checked ? [...current, pid] : current.filter((id) => id !== pid)
+                          onChange({ ...item, support_product_ids: next })
+                        }}
+                        className="w-4 h-4 rounded border-gray-300 text-primary-400 focus:ring-primary-400"
+                      />
+                      <span className="text-sm text-navy-900 flex-1">{dpProd.name}</span>
+                      <span className="text-xs text-gray-400">{fmt(dpRevenue, 0)}</span>
+                    </label>
+                  )
+                })}
+              {allItems.filter((dp) => {
+                const key = dp._id || dp.id
+                const selfKey = item._id || item.id
+                return key !== selfKey && dp.product_id && !products.find((p) => p.id === dp.product_id)?.is_support_charge
+              }).length === 0 && (
+                <p className="text-xs text-gray-400 text-center py-3">Add other products first.</p>
+              )}
             </div>
           </div>
         </div>
@@ -561,6 +673,8 @@ export default function NewDeal() {
             _milestone_total: milestonesData.filter((m) => m.deal_product_id === dp.id).reduce((s, m) => s + (parseFloat(m.amount) || 0), 0),
             billing_start_date: dp.billing_start_date || '',
             billing_months: dp.billing_months || '',
+            billing_mode: dp.billing_mode || 'monthly',
+            support_product_ids: dp.support_product_ids || [],
           }
         }))
 
@@ -588,7 +702,7 @@ export default function NewDeal() {
   const totalAllocated = teamMembers.filter((m) => m.role === 'sales').reduce((s, m) => s + (m.commission_percent || 0), 0)
 
   function addProduct() {
-    setDealProducts((prev) => [...prev, { _id: Date.now(), product_id: '', commission_amount: 0, milestones: [], _milestone_total: 0, billing_start_date: '', billing_months: '' }])
+    setDealProducts((prev) => [...prev, { _id: Date.now(), product_id: '', commission_amount: 0, milestones: [], _milestone_total: 0, billing_start_date: '', billing_months: '', billing_mode: 'monthly', support_product_ids: [] }])
   }
 
   useEffect(() => {
@@ -837,6 +951,7 @@ export default function NewDeal() {
             <ProductRow
               key={item.id || item._id}
               item={item}
+              allItems={dealProducts}
               products={products}
               vendors={vendors}
               pricingMap={pricingMap}

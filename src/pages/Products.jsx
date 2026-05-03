@@ -17,13 +17,14 @@ function ProductForm({ initial, vendors, categories, globalRate, onSave, onClose
   const [form, setForm] = useState(() => {
     const f = initial || {
       name: '', sku: '', vendor_id: '', category_id: '', commission_metric: 'NAVC/RAV',
-      base_rate: globalRate, rate_overridden: false, is_usage_based: false, unit_label: '', billing_frequency: 'monthly', active: true,
+      base_rate: globalRate, rate_overridden: false, is_usage_based: false, unit_label: '',
+      billing_frequency: 'monthly', is_support_charge: false, default_support_pct: 15, active: true,
     }
     // Normalize legacy margin type values
     if (!f.default_margin_type || ['amount', 'per_item'].includes(f.default_margin_type)) {
-      return { ...f, default_margin_type: 'fixed', billing_frequency: f.billing_frequency || 'monthly', rate_overridden: f.rate_overridden || false }
+      return { ...f, default_margin_type: 'fixed', billing_frequency: f.billing_frequency || 'monthly', rate_overridden: f.rate_overridden || false, is_support_charge: f.is_support_charge || false, default_support_pct: f.default_support_pct ?? 15 }
     }
-    return { ...f, billing_frequency: f.billing_frequency || 'monthly', rate_overridden: f.rate_overridden || false }
+    return { ...f, billing_frequency: f.billing_frequency || 'monthly', rate_overridden: f.rate_overridden || false, is_support_charge: f.is_support_charge || false, default_support_pct: f.default_support_pct ?? 15 }
   })
   const [saving, setSaving] = useState(false)
 
@@ -115,6 +116,25 @@ function ProductForm({ initial, vendors, categories, globalRate, onSave, onClose
       </div>
       {form.is_usage_based && (
         <Input label="Unit Label" value={form.unit_label || ''} onChange={(e) => setForm({ ...form, unit_label: e.target.value })} placeholder="GB, Hours, Users..." />
+      )}
+      <div className="flex items-center gap-3">
+        <input
+          id="support_charge"
+          type="checkbox"
+          checked={form.is_support_charge}
+          onChange={(e) => setForm({ ...form, is_support_charge: e.target.checked })}
+          className="w-4 h-4 rounded border-gray-300 text-primary-400 focus:ring-primary-400"
+        />
+        <label htmlFor="support_charge" className="text-sm text-navy-900">Support Charge product (% of selected line items)</label>
+      </div>
+      {form.is_support_charge && (
+        <Input
+          label="Default Support %"
+          type="number" min="0" max="100" step="0.1" suffix="%"
+          hint="Default percentage applied to selected products in a deal"
+          value={form.default_support_pct ?? 15}
+          onChange={(e) => setForm({ ...form, default_support_pct: parseFloat(e.target.value) || 0 })}
+        />
       )}
       {form.commission_metric === 'GM' && !form.is_usage_based && (
         <div className="space-y-3">
@@ -282,6 +302,7 @@ export default function Products() {
                     <td className="px-4 py-3.5">
                       <p className="font-medium text-navy-900">{p.name}</p>
                       {p.is_usage_based && <p className="text-xs text-gray-400">{p.unit_label}</p>}
+                      {p.is_support_charge && <p className="text-xs text-purple-600">Support charge · {p.default_support_pct ?? 15}%</p>}
                     </td>
                     <td className="px-4 py-3.5 hidden md:table-cell font-mono text-xs text-gray-500">{p.sku || '—'}</td>
                     <td className="px-4 py-3.5 text-gray-600">{p.vendors?.name || '—'}</td>
