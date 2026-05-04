@@ -14,6 +14,8 @@ const TITLES = {
   '/partners': 'Partners',
   '/categories': 'Categories',
   '/people': 'People',
+  '/customers': 'Customers',
+  '/users': 'User Management',
   '/settings': 'Settings',
 }
 

@@ -31,7 +31,7 @@ export default function Analytics() {
   const stats = useMemo(() => {
     const contracted = deals.filter((d) => d.stage === 'contracted')
     const closedLost = deals.filter((d) => d.stage === 'closed_lost')
-    const active = deals.filter((d) => d.stage !== 'closed_lost')
+    const active = deals.filter((d) => d.stage !== 'closed_lost' && d.stage !== 'contracted')
     const total = contracted.length + closedLost.length
     const winRate = total > 0 ? (contracted.length / total) * 100 : 0
     const avgAcv = active.length > 0 ? active.reduce((s, d) => s + (d.acv || 0), 0) / active.length : 0
@@ -70,7 +70,7 @@ export default function Analytics() {
 
   const topCompanies = useMemo(() => {
     const map = {}
-    deals.filter((d) => d.stage !== 'closed_lost').forEach((d) => {
+    deals.filter((d) => d.stage !== 'closed_lost' && d.stage !== 'contracted').forEach((d) => {
       const co = d.company_name || 'Unknown'
       if (!map[co]) map[co] = { name: co, count: 0, value: 0 }
       map[co].count++
@@ -80,8 +80,8 @@ export default function Analytics() {
   }, [deals])
 
   const typeBreakdown = useMemo(() => {
-    const newDeals = deals.filter((d) => d.deal_type !== 'renewal' && d.stage !== 'closed_lost')
-    const renewals = deals.filter((d) => d.deal_type === 'renewal' && d.stage !== 'closed_lost')
+    const newDeals = deals.filter((d) => d.deal_type !== 'renewal' && d.stage !== 'closed_lost' && d.stage !== 'contracted')
+    const renewals = deals.filter((d) => d.deal_type === 'renewal' && d.stage !== 'closed_lost' && d.stage !== 'contracted')
     return { new: newDeals.length, renewals: renewals.length, newValue: newDeals.reduce((s, d) => s + (d.acv || 0), 0), renewalValue: renewals.reduce((s, d) => s + (d.acv || 0), 0) }
   }, [deals])
 

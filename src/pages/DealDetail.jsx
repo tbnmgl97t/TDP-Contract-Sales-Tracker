@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Edit, Trash2, Upload, FileText, Download, ChevronRight, DollarSign, Users, Package, FileCheck, AlertTriangle, ChevronDown, ChevronUp, Eye, Sparkles, Send, X, Loader, Copy, Check } from 'lucide-react'
+import { Edit, Trash2, Upload, FileText, Download, ChevronRight, DollarSign, Users, Package, FileCheck, AlertTriangle, ChevronDown, ChevronUp, Eye, Sparkles, Send, X, Loader, Copy, Check, LayoutTemplate } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import Card, { CardHeader } from '../components/ui/Card'
 import { StageBadge, Badge } from '../components/ui/Badge'
@@ -8,8 +8,10 @@ import Button from '../components/ui/Button'
 import { Select } from '../components/ui/Input'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
 import { DEAL_STAGES } from '../lib/constants'
-import { buildCommissionSchedule, fmt } from '../lib/commission'
+import { buildCommissionSchedule, fmt, getMarginTier } from '../lib/commission'
 import { PageSpinner } from '../components/ui/Spinner'
+import { useUser } from '../contexts/UserContext'
+import DealOverviewModal from '../components/DealOverviewModal'
 import { format } from 'date-fns'
 import ReactMarkdown from 'react-markdown'
 
@@ -86,6 +88,7 @@ function StageProgress({ current }) {
 export default function DealDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { isManager, isSales, profile } = useUser()
   const [deal, setDeal] = useState(null)
   const [dealProducts, setDealProducts] = useState([])
   const [dealTeam, setDealTeam] = useState([])
@@ -103,10 +106,13 @@ export default function DealDetail() {
   const [aiChat, setAiChat] = useState([])
   const [aiInput, setAiInput] = useState('')
   const [aiThinking, setAiThinking] = useState(false)
-  const [aiMinimized, setAiMinimized] = useState(false)
+  const [aiMinimized, setAiMinimized] = useState(true)
   const [currentUserId, setCurrentUserId] = useState(null)
   const [deleteContractDlg, setDeleteContractDlg] = useState(null)
   const [auditLog, setAuditLog] = useState([])
+  const [showOverview, setShowOverview] = useState(false)
+  const [approval, setApproval] = useState(null)
+  const [approving, setApproving] = useState(false)
   const chatEndRef = useRef(null)
 
   async function load() {
@@ -132,6 +138,7 @@ export default function DealDetail() {
         .order('sort_order')
       milestonesData = ms || []
     }
+    const { data: appr } = await supabase.from('deal_approvals').select('*').eq('deal_id', id).maybeSingle()
     setDeal(d)
     setDealProducts((dps || []).map((dp) => ({
       ...dp,
@@ -140,6 +147,7 @@ export default function DealDetail() {
     setDealTeam(team || [])
     setDealPartners(dPartners || [])
     setContracts(conts || [])
+    setApproval(appr || null)
     setLoading(false)
   }
 
@@ -175,6 +183,19 @@ export default function DealDetail() {
     setDeleting(true)
     await supabase.from('deals').update({ deleted_at: new Date().toISOString() }).eq('id', id)
     navigate('/deals')
+  }
+
+  async function handleApprovalAction(newStatus) {
+    setApproving(true)
+    const { data: { session } } = await supabase.auth.getSession()
+    await supabase.from('deal_approvals').update({
+      status: newStatus,
+      reviewed_by: session?.user?.email || null,
+      updated_at: new Date().toISOString(),
+    }).eq('deal_id', id)
+    await logEvent(`Deal ${newStatus} by ${session?.user?.email || 'manager'}`)
+    setApproval((prev) => ({ ...prev, status: newStatus, reviewed_by: session?.user?.email }))
+    setApproving(false)
   }
 
   async function handleFileUpload(e) {
@@ -446,6 +467,7 @@ export default function DealDetail() {
           <p className="text-sm text-gray-500">{deal.company_name}</p>
         </div>
         <div className="flex gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setShowOverview(true)} icon={<LayoutTemplate size={14} />}>Overview</Button>
           <Button variant="secondary" size="sm" onClick={() => navigate(`/deals/${id}/edit`)} icon={<Edit size={14} />}>Edit</Button>
           <Button variant="danger" size="sm" onClick={() => setDeleteDlg(true)} icon={<Trash2 size={14} />}>Delete</Button>
         </div>
@@ -469,7 +491,7 @@ export default function DealDetail() {
       </Card>
 
       {/* Stats row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className={`grid gap-3 ${isManager ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2 sm:grid-cols-3'}`}>
         <Card className="!py-3">
           <p className="text-xs text-gray-500">ACV</p>
           <p className="text-lg font-bold text-navy-900 mt-0.5">
@@ -480,10 +502,10 @@ export default function DealDetail() {
           )}
         </Card>
         {[
-          { label: 'Total Value', value: fmt(dealProducts.length > 0 ? productACV * (deal.contract_months || 12) / 12 : (deal.total_contract_value || deal.acv), 2) },
-          { label: 'Contract Months', value: deal.contract_months || 12 },
-          { label: 'Commission', value: fmt(totalCommission, 2) },
-        ].map((stat) => (
+          { label: 'Total Value', value: fmt(dealProducts.length > 0 ? productACV * (deal.contract_months || 12) / 12 : (deal.total_contract_value || deal.acv), 2), show: true },
+          { label: 'Contract Months', value: deal.contract_months || 12, show: true },
+          { label: 'Commission', value: fmt(totalCommission, 2), show: isManager },
+        ].filter((s) => s.show).map((stat) => (
           <Card key={stat.label} className="!py-3">
             <p className="text-xs text-gray-500">{stat.label}</p>
             <p className="text-lg font-bold text-navy-900 mt-0.5">{stat.value}</p>
@@ -491,17 +513,106 @@ export default function DealDetail() {
         ))}
       </div>
 
+      {/* Margin / Approval banner */}
+      {approval && (() => {
+        const tier = getMarginTier(productACV > 0 ? productACV : (deal.acv || 0), totalCogs)
+        const bannerStyles = {
+          green: 'bg-green-50 border-green-200 text-green-800',
+          yellow: 'bg-yellow-50 border-yellow-200 text-yellow-800',
+          red: 'bg-red-50 border-red-200 text-red-800',
+        }
+        const tierLabel = { green: 'Healthy Margin', yellow: 'Low Margin — Review Required', red: 'Below Minimum Margin' }
+        const dotColor = { green: 'bg-green-400', yellow: 'bg-yellow-400', red: 'bg-red-400' }
+        const statusLabel = { auto_approved: 'Auto-approved', pending: 'Pending approval', approved: 'Approved', rejected: 'Rejected' }
+        return (
+          <div className={`border rounded-xl px-4 py-3 flex items-center justify-between gap-3 ${bannerStyles[tier] || 'bg-gray-50 border-gray-200 text-gray-700'}`}>
+            <div className="flex items-center gap-2.5">
+              <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${dotColor[tier] || 'bg-gray-400'}`} />
+              <div>
+                <span className="text-sm font-semibold">{tierLabel[tier] || 'Margin'}</span>
+                {approval.margin_pct != null && (
+                  <span className="ml-2 text-xs opacity-75">({(approval.margin_pct * 100).toFixed(1)}%)</span>
+                )}
+                <span className="ml-3 text-xs opacity-60">· {statusLabel[approval.status] || approval.status}</span>
+                {approval.reviewed_by && <span className="ml-1.5 text-xs opacity-50">by {approval.reviewed_by}</span>}
+              </div>
+            </div>
+            {isManager && (approval.status === 'pending' || approval.status === 'rejected') && (
+              <div className="flex gap-2 flex-shrink-0">
+                <button
+                  onClick={() => handleApprovalAction('approved')}
+                  disabled={approving}
+                  className="px-3 py-1 text-xs font-semibold bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+                >
+                  Approve
+                </button>
+                {approval.status !== 'rejected' && (
+                  <button
+                    onClick={() => handleApprovalAction('rejected')}
+                    disabled={approving}
+                    className="px-3 py-1 text-xs font-semibold bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+                  >
+                    Reject
+                  </button>
+                )}
+              </div>
+            )}
+            {isManager && approval.status === 'approved' && (
+              <button
+                onClick={() => handleApprovalAction('rejected')}
+                disabled={approving}
+                className="px-3 py-1 text-xs font-medium border border-current rounded-lg opacity-60 hover:opacity-100 transition-opacity disabled:opacity-30"
+              >
+                Revoke
+              </button>
+            )}
+          </div>
+        )
+      })()}
+
       {/* Partner commissions */}
       {partnerStack.length > 0 && (
         <Card>
           <CardHeader title="Partner Commissions" subtitle={`Customer ACV: ${fmt(customerAcv, 2)}`} />
-          <div className="space-y-2">
-            <div className="flex justify-between text-sm py-1">
-              <span className="text-gray-500">Trilogy ACV (base)</span>
-              <span className="font-medium text-navy-900">{fmt(productACV > 0 ? productACV : deal.acv, 2)}</span>
+          <div className="space-y-0">
+            {/* Pricing breakdown */}
+            <div className="bg-gray-50 rounded-xl p-4 mb-4 space-y-1.5 text-sm">
+              {totalCogs > 0 ? (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Vendor Cost (COGS)</span>
+                    <span className="font-medium text-navy-900">{fmt(totalCogs, 2)}</span>
+                  </div>
+                  <div className="flex justify-between text-teal-700">
+                    <span>+ Trilogy Margin</span>
+                    <span className="font-medium">+{fmt((productACV > 0 ? productACV : (deal.acv || 0)) - totalCogs, 2)}</span>
+                  </div>
+                  <div className="flex justify-between pt-1.5 border-t border-gray-200">
+                    <span className="text-gray-600 font-medium">Trilogy ACV</span>
+                    <span className="font-medium text-navy-900">{fmt(productACV > 0 ? productACV : deal.acv, 2)}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Trilogy ACV (base)</span>
+                  <span className="font-medium text-navy-900">{fmt(productACV > 0 ? productACV : deal.acv, 2)}</span>
+                </div>
+              )}
+              {partnerStack.map((dp) => (
+                <div key={dp.id} className="flex justify-between text-purple-700">
+                  <span>+ {dp.partners?.name} ({dp.commission_pct}%)</span>
+                  <span className="font-medium">+{fmt(dp.commission_amount, 2)}</span>
+                </div>
+              ))}
+              <div className="flex justify-between pt-1.5 border-t border-gray-200 font-semibold">
+                <span className="text-navy-900">Customer ACV</span>
+                <span className="text-navy-900">{fmt(customerAcv, 2)}</span>
+              </div>
             </div>
+
+            {/* Partner detail rows */}
             {partnerStack.map((dp, i) => (
-              <div key={dp.id} className="flex items-center justify-between text-sm py-1 border-t border-gray-50">
+              <div key={dp.id} className="flex items-center justify-between text-sm py-2.5 border-t border-gray-50 first:border-t-0">
                 <div className="flex items-center gap-2">
                   <div className="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center text-purple-700 font-bold text-xs">{i + 1}</div>
                   <div>
@@ -512,10 +623,6 @@ export default function DealDetail() {
                 <span className="font-semibold text-purple-700">{fmt(dp.commission_amount, 2)}</span>
               </div>
             ))}
-            <div className="flex justify-between text-sm pt-2 border-t border-gray-200 font-semibold">
-              <span className="text-navy-900">Customer ACV (final)</span>
-              <span className="text-navy-900">{fmt(customerAcv, 2)}</span>
-            </div>
           </div>
         </Card>
       )}
@@ -550,41 +657,50 @@ export default function DealDetail() {
           <CardHeader title="Team" />
           <div className="space-y-2">
             {dealTeam.length === 0 && <p className="text-sm text-gray-400">No team members assigned.</p>}
-            {salesTeam.map((m) => (
-              <div key={m.id} className="flex items-center justify-between py-1.5">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-semibold text-xs flex-shrink-0">
-                    {m.people?.name?.[0]}
+            {salesTeam.map((m) => {
+              const isOwnRow = m.people?.email === profile?.email
+              const myCommission = totalCommission * ((m.commission_percent || 0) / 100)
+              return (
+                <div key={m.id} className="flex items-center justify-between py-1.5">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-semibold text-xs flex-shrink-0">
+                      {m.people?.name?.[0]}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-navy-900">{m.people?.name}</p>
+                      <p className="text-xs text-gray-500">Sales</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-navy-900">{m.people?.name}</p>
-                    <p className="text-xs text-gray-500">Sales</p>
-                  </div>
+                  {isManager && <Badge color="green">{m.commission_percent}% commission</Badge>}
+                  {!isManager && isOwnRow && <Badge color="green">{fmt(myCommission, 2)}</Badge>}
                 </div>
-                <Badge color="green">{m.commission_percent}% commission</Badge>
-              </div>
-            ))}
-            {supportTeam.map((m) => (
-              <div key={m.id} className="flex items-center justify-between py-1.5">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-full bg-accent-100 flex items-center justify-center text-accent-700 font-semibold text-xs flex-shrink-0">
-                    {m.people?.name?.[0]}
+              )
+            })}
+            {supportTeam.map((m) => {
+              const isOwnRow = m.people?.email === profile?.email
+              const showSpif = isManager || isSales || isOwnRow
+              return (
+                <div key={m.id} className="flex items-center justify-between py-1.5">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-full bg-accent-100 flex items-center justify-center text-accent-700 font-semibold text-xs flex-shrink-0">
+                      {m.people?.name?.[0]}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-navy-900">{m.people?.name}</p>
+                      <p className="text-xs text-gray-500">Support</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-navy-900">{m.people?.name}</p>
-                    <p className="text-xs text-gray-500">Support</p>
-                  </div>
+                  {showSpif && <Badge color="yellow">SPIF {fmt(m.spif_amount, 2)}</Badge>}
                 </div>
-                <Badge color="yellow">SPIF {fmt(m.spif_amount, 2)}</Badge>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </Card>
       </div>
 
       {/* Products */}
       <Card>
-        <CardHeader title="Products & Services" subtitle={`Total Commission: ${fmt(totalCommission, 2)}`} />
+        <CardHeader title="Products & Services" subtitle={isManager ? `Total Commission: ${fmt(totalCommission, 2)}` : undefined} />
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -593,7 +709,7 @@ export default function DealDetail() {
                 <th className="text-left py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden sm:table-cell">Metric</th>
                 <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">Revenue</th>
                 <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">COGS</th>
-                <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide">Commission</th>
+                {isManager && <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide">Commission</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -607,7 +723,7 @@ export default function DealDetail() {
                       <td className="py-3 hidden sm:table-cell text-gray-500">{dp.commission_metric}</td>
                       <td className="py-3 text-right hidden md:table-cell text-gray-700">{fmt(dp.total_revenue || dp.annual_value || dp.yearly_cost, 2)}</td>
                       <td className="py-3 text-right hidden md:table-cell text-gray-500">{dp.cogs_amount ? fmt(dp.cogs_amount, 2) : '—'}</td>
-                      <td className="py-3 text-right font-semibold text-primary-600">{fmt(dp.commission_amount, 2)}</td>
+                      {isManager && <td className="py-3 text-right font-semibold text-primary-600">{fmt(dp.commission_amount, 2)}</td>}
                     </tr>
                     {hasMilestones && milestones.map((m, i) => (
                       <tr key={`${dp.id}-m-${i}`} className="bg-gray-50/60">
@@ -622,9 +738,11 @@ export default function DealDetail() {
                         </td>
                         <td className="py-2 text-right text-xs font-medium text-gray-600 hidden md:table-cell">{fmt(parseFloat(m.amount), 2)}</td>
                         <td className="py-2 hidden md:table-cell" />
-                        <td className="py-2 text-right text-xs text-gray-400">
-                          {fmt(parseFloat(m.amount) * (dp.base_rate || 0.07), 2)}
-                        </td>
+                        {isManager && (
+                          <td className="py-2 text-right text-xs text-gray-400">
+                            {fmt(parseFloat(m.amount) * (dp.base_rate || 0.07), 2)}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </>
@@ -634,7 +752,7 @@ export default function DealDetail() {
                 <td colSpan={2} className="py-2 font-semibold text-navy-900 text-sm">Total</td>
                 <td className="py-2 text-right font-bold text-navy-900 hidden md:table-cell">{fmt(totalRevenue, 2)}</td>
                 <td className="py-2 text-right font-bold text-navy-900 hidden md:table-cell">{fmt(totalCogs, 2)}</td>
-                <td className="py-2 text-right font-bold text-primary-600">{fmt(totalCommission, 2)}</td>
+                {isManager && <td className="py-2 text-right font-bold text-primary-600">{fmt(totalCommission, 2)}</td>}
               </tr>
             </tbody>
           </table>
@@ -645,7 +763,7 @@ export default function DealDetail() {
       </Card>
 
       {/* Commission Schedule */}
-      {!deal.is_tbn_property && schedule.length > 0 && (
+      {isManager && !deal.is_tbn_property && schedule.length > 0 && (
         <Card>
           <CardHeader title="Commission Schedule" subtitle="Quarterly payout breakdown" />
           {deal.is_tbn_property && (
@@ -944,6 +1062,16 @@ export default function DealDetail() {
           )}
         </div>
 
+      {showOverview && (
+        <DealOverviewModal
+          deal={deal}
+          dealProducts={dealProducts}
+          dealTeam={dealTeam}
+          dealPartners={dealPartners}
+          onClose={() => setShowOverview(false)}
+          isManager={isManager}
+        />
+      )}
       <ConfirmDialog
         open={deleteDlg}
         onClose={() => setDeleteDlg(false)}

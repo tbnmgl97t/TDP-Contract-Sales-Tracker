@@ -1,0 +1,344 @@
+import { useRef } from 'react'
+import { X, Printer } from 'lucide-react'
+import { format } from 'date-fns'
+import { fmt, buildCommissionSchedule } from '../lib/commission'
+import { StageBadge } from './ui/Badge'
+
+export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPartners, onClose, isManager }) {
+  const printRef = useRef(null)
+
+  // Totals
+  const totalCogs = dealProducts.reduce((s, p) => s + (p.cogs_amount || 0), 0)
+  const totalCommission = dealProducts.reduce((s, p) => s + (p.commission_amount || 0), 0)
+
+  // ACV
+  const productACV = dealProducts.reduce((s, p) => {
+    if (p.commission_metric === 'GM') {
+      if (p.monthly_cost != null && p.monthly_cost > 0) return s + p.monthly_cost * 12
+      return s + (p.yearly_cost || (p.net_revenue || 0) + (p.cogs_amount || 0))
+    }
+    return s + (p.annual_value || 0)
+  }, 0)
+  const baseAcv = productACV > 0 ? productACV : (deal.acv || 0)
+
+  // Partner stack
+  let _cv = baseAcv
+  const partnerStack = dealPartners.map((dp) => {
+    const pct = parseFloat(dp.commission_pct) / 100
+    const prev = _cv
+    _cv = pct > 0 && pct < 1 ? prev / (1 - pct) : prev
+    return { ...dp, commission_amount: _cv - prev }
+  })
+  const customerAcv = _cv
+
+  // Team
+  const salesTeam = dealTeam.filter((m) => m.role === 'sales')
+  const supportTeam = dealTeam.filter((m) => m.role === 'support')
+
+  // Commission schedule (manager only)
+  const schedule = isManager
+    ? buildCommissionSchedule(deal, dealProducts, dealTeam.map((m) => ({ ...m, person_name: m.people?.name })))
+    : []
+
+  const quarterGroups = schedule.reduce((acc, entry) => {
+    const key = `${entry.year} Q${entry.quarter}`
+    if (!acc[key]) acc[key] = { key, quarter: entry.quarter, year: entry.year, entries: [] }
+    acc[key].entries.push(entry)
+    return acc
+  }, {})
+
+  function handlePrint() {
+    const original = document.title
+    document.title = `${deal.name} — Deal Overview — ${format(new Date(), 'yyyy-MM-dd')}`
+    window.print()
+    document.title = original
+  }
+
+  return (
+    <>
+      {/* Print isolation styles */}
+      <style>{`
+        @media print {
+          html, body { background: white !important; margin: 0; }
+          body * { visibility: hidden; }
+          #deal-overview-print, #deal-overview-print * { visibility: visible; }
+          #deal-overview-print { position: absolute; top: 0; left: 0; width: 100%; background: white !important; }
+          #deal-overview-print * { background: transparent !important; }
+          .no-print { display: none !important; }
+        }
+        @media screen {
+          #deal-overview-print { display: none; }
+        }
+      `}</style>
+
+      {/* Screen modal */}
+      <div className="no-print fixed inset-0 bg-black/50 z-50 flex items-start justify-center overflow-y-auto p-4 py-8">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl">
+          {/* Modal header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white rounded-t-2xl z-10">
+            <div>
+              <h3 className="text-base font-semibold text-navy-900">{deal.name}</h3>
+              <p className="text-xs text-gray-500">{deal.company_name} — Deal Overview</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handlePrint}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-navy-900 border border-gray-200 hover:border-gray-300 rounded-lg transition-colors"
+              >
+                <Printer size={14} />
+                Print / PDF
+              </button>
+              <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-navy-900 hover:bg-gray-100 rounded-lg transition-colors">
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+
+          {/* Modal body */}
+          <div className="px-6 py-5 space-y-6" ref={printRef}>
+            <OverviewContent
+              deal={deal}
+              dealProducts={dealProducts}
+              totalCogs={totalCogs}
+              totalCommission={totalCommission}
+              baseAcv={baseAcv}
+              partnerStack={partnerStack}
+              customerAcv={customerAcv}
+              salesTeam={salesTeam}
+              supportTeam={supportTeam}
+              quarterGroups={quarterGroups}
+              isManager={isManager}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Print-only version */}
+      <div id="deal-overview-print" className="p-8 max-w-3xl mx-auto font-sans">
+        <div className="flex items-start justify-between mb-6 pb-4 border-b-2 border-gray-200">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">{deal.name}</h1>
+            <p className="text-sm text-gray-500 mt-0.5">{deal.company_name}</p>
+          </div>
+          <div className="text-right text-xs text-gray-400">
+            <p>Trilogy Digital</p>
+            <p>Deal Overview</p>
+            <p>{format(new Date(), 'MMM d, yyyy')}</p>
+          </div>
+        </div>
+        <OverviewContent
+          deal={deal}
+          dealProducts={dealProducts}
+          totalCogs={totalCogs}
+          totalCommission={totalCommission}
+          baseAcv={baseAcv}
+          partnerStack={partnerStack}
+          customerAcv={customerAcv}
+          salesTeam={salesTeam}
+          supportTeam={supportTeam}
+          quarterGroups={quarterGroups}
+          isManager={isManager}
+          printMode
+        />
+      </div>
+    </>
+  )
+}
+
+function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseAcv, partnerStack, customerAcv, salesTeam, supportTeam, quarterGroups, isManager, printMode }) {
+  const row = (label, value, accent) => (
+    <div className={`flex justify-between text-sm py-1 ${accent ? 'font-semibold' : ''}`}>
+      <span className={accent ? 'text-gray-900' : 'text-gray-500'}>{label}</span>
+      <span className={accent ? 'text-gray-900' : 'text-gray-800 font-medium'}>{value}</span>
+    </div>
+  )
+
+  return (
+    <div className="space-y-6">
+      {/* Deal Info */}
+      <section>
+        <h4 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Deal Info</h4>
+        <div className="bg-gray-50 rounded-xl p-4 space-y-0.5">
+          {row('Customer', deal.company_name)}
+          {row('Type', deal.deal_type === 'renewal' ? 'Renewal' : 'New Business')}
+          {row('Contract Start', deal.contract_start ? format(new Date(deal.contract_start + 'T12:00:00'), 'MMM d, yyyy') : '—')}
+          {row('Contract End', deal.contract_end ? format(new Date(deal.contract_end + 'T12:00:00'), 'MMM d, yyyy') : '—')}
+          {row('Contract Length', `${deal.contract_months || 12} months`)}
+          {row('Customer ACV', fmt(customerAcv, 2), true)}
+        </div>
+      </section>
+
+      {/* Products */}
+      <section>
+        <h4 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Products & Services</h4>
+        <div className="rounded-xl border border-gray-100 overflow-x-auto">
+          <table className="w-full min-w-[480px] text-sm">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-100">
+                <th className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs">Product</th>
+                <th className="text-right px-4 py-2.5 font-medium text-gray-500 text-xs">Revenue</th>
+                {totalCogs > 0 && <th className="text-right px-4 py-2.5 font-medium text-gray-500 text-xs">COGS</th>}
+                {totalCogs > 0 && isManager && <th className="text-right px-4 py-2.5 font-medium text-gray-500 text-xs">Trilogy Margin</th>}
+                {isManager && <th className="text-right px-4 py-2.5 font-medium text-gray-500 text-xs">Commission</th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {dealProducts.map((dp) => {
+                const revenue = dp.total_revenue || dp.annual_value || dp.yearly_cost || 0
+                const margin = totalCogs > 0 ? revenue - (dp.cogs_amount || 0) : null
+                return (
+                  <tr key={dp.id}>
+                    <td className="px-4 py-2.5 font-medium text-gray-900">{dp.products?.name}</td>
+                    <td className="px-4 py-2.5 text-right text-gray-700">{fmt(revenue, 2)}</td>
+                    {totalCogs > 0 && <td className="px-4 py-2.5 text-right text-gray-500">{dp.cogs_amount ? fmt(dp.cogs_amount, 2) : '—'}</td>}
+                    {totalCogs > 0 && isManager && <td className="px-4 py-2.5 text-right text-teal-700">{margin != null ? fmt(margin, 2) : '—'}</td>}
+                    {isManager && <td className="px-4 py-2.5 text-right font-semibold text-indigo-700">{fmt(dp.commission_amount, 2)}</td>}
+                  </tr>
+                )
+              })}
+              <tr className="border-t-2 border-gray-200 bg-gray-50">
+                <td className="px-4 py-2.5 font-semibold text-gray-900 text-sm">Total</td>
+                <td className="px-4 py-2.5 text-right font-bold text-gray-900">
+                  {fmt(dealProducts.reduce((s, p) => s + (p.total_revenue || p.annual_value || p.yearly_cost || 0), 0), 2)}
+                </td>
+                {totalCogs > 0 && <td className="px-4 py-2.5 text-right font-bold text-gray-700">{fmt(totalCogs, 2)}</td>}
+                {totalCogs > 0 && isManager && (
+                  <td className="px-4 py-2.5 text-right font-bold text-teal-700">
+                    {fmt(dealProducts.reduce((s, p) => s + (p.total_revenue || p.annual_value || p.yearly_cost || 0) - (p.cogs_amount || 0), 0), 2)}
+                  </td>
+                )}
+                {isManager && <td className="px-4 py-2.5 text-right font-bold text-indigo-700">{fmt(totalCommission, 2)}</td>}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Pricing Stack */}
+      <section>
+        <h4 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Pricing Stack</h4>
+        <div className="bg-gray-50 rounded-xl p-4 space-y-1.5 text-sm">
+          {totalCogs > 0 ? (
+            <>
+              <div className="flex justify-between">
+                <span className="text-gray-500">Vendor Cost (COGS)</span>
+                <span className="font-medium text-gray-900">{fmt(totalCogs, 2)}</span>
+              </div>
+              <div className="flex justify-between text-teal-700">
+                <span>+ Trilogy Margin</span>
+                <span className="font-medium">+{fmt(baseAcv - totalCogs, 2)}</span>
+              </div>
+              <div className="flex justify-between pt-1.5 border-t border-gray-200">
+                <span className="font-medium text-gray-700">Trilogy ACV</span>
+                <span className="font-medium text-gray-900">{fmt(baseAcv, 2)}</span>
+              </div>
+            </>
+          ) : (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Trilogy ACV (base)</span>
+              <span className="font-medium text-gray-900">{fmt(baseAcv, 2)}</span>
+            </div>
+          )}
+          {partnerStack.map((dp) => (
+            <div key={dp.id} className="flex justify-between text-purple-700">
+              <span>+ {dp.partners?.name} ({dp.commission_pct}%)</span>
+              <span className="font-medium">+{fmt(dp.commission_amount, 2)}</span>
+            </div>
+          ))}
+          <div className="flex justify-between pt-1.5 border-t border-gray-200 font-semibold">
+            <span className="text-gray-900">Customer ACV</span>
+            <span className="text-gray-900">{fmt(customerAcv, 2)}</span>
+          </div>
+          {(() => {
+            const totalSpif = supportTeam.reduce((s, m) => s + (m.spif_amount || 0), 0)
+            const totalPayout = totalCommission + totalSpif
+            // Trilogy receives baseAcv (its own ACV, before partner markup).
+            // It pays out vendor COGS + internal commissions/SPIFs.
+            const trilogyNet = baseAcv - totalCogs - totalPayout
+            return (
+              <>
+                <div className="flex justify-between text-indigo-700 pt-1">
+                  <span>− Internal commissions{totalSpif > 0 ? ' + SPIFs' : ''}</span>
+                  <span className="font-medium">−{fmt(totalPayout, 2)}</span>
+                </div>
+                <div className="flex justify-between pt-1.5 border-t border-gray-200 font-bold text-base">
+                  <span className="text-gray-900">Trilogy Net</span>
+                  <span className={trilogyNet >= 0 ? 'text-teal-700' : 'text-red-600'}>{fmt(trilogyNet, 2)}</span>
+                </div>
+              </>
+            )
+          })()}
+        </div>
+      </section>
+
+      {/* Team */}
+      {(salesTeam.length > 0 || supportTeam.length > 0) && (
+        <section>
+          <h4 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Team</h4>
+          <div className="bg-gray-50 rounded-xl p-4 space-y-2">
+            {salesTeam.map((m) => (
+              <div key={m.id} className="flex justify-between text-sm">
+                <div>
+                  <span className="font-medium text-gray-900">{m.people?.name}</span>
+                  <span className="text-gray-400 ml-2 text-xs">Sales</span>
+                </div>
+                {isManager
+                  ? <span className="font-medium text-indigo-700">{m.commission_percent}% · {fmt(totalCommission * (m.commission_percent / 100), 2)}</span>
+                  : <span className="font-medium text-indigo-700">{fmt(totalCommission * (m.commission_percent / 100), 2)}</span>
+                }
+              </div>
+            ))}
+            {supportTeam.map((m) => (
+              <div key={m.id} className="flex justify-between text-sm">
+                <div>
+                  <span className="font-medium text-gray-900">{m.people?.name}</span>
+                  <span className="text-gray-400 ml-2 text-xs">Support SPIF</span>
+                </div>
+                <span className="font-medium text-amber-700">{fmt(m.spif_amount, 2)}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Commission Schedule — manager only */}
+      {isManager && Object.keys(quarterGroups).length > 0 && (
+        <section>
+          <h4 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Commission Schedule</h4>
+          <div className="space-y-3">
+            {Object.values(quarterGroups).sort((a, b) => a.year !== b.year ? a.year - b.year : a.quarter - b.quarter).map((group) => {
+              const total = group.entries.reduce((s, e) => s + (e.amount || 0), 0)
+              return (
+                <div key={group.key} className="rounded-xl border border-gray-100 overflow-hidden">
+                  <div className="bg-gray-50 px-4 py-2 flex items-center justify-between border-b border-gray-100">
+                    <span className="text-sm font-semibold text-gray-900">{group.year} Q{group.quarter}</span>
+                    <span className="text-sm font-bold text-indigo-700">{fmt(total, 2)}</span>
+                  </div>
+                  <div className="divide-y divide-gray-50">
+                    {group.entries.map((entry, i) => (
+                      <div key={i} className="flex items-center justify-between px-4 py-2 text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-gray-900">{entry.person_name}</span>
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${entry.type === 'spif' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+                            {entry.type === 'spif' ? 'SPIF' : `${entry.role} commission`}
+                          </span>
+                        </div>
+                        <span className="font-semibold text-gray-900">{fmt(entry.amount, 2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
+      {printMode && (
+        <div className="pt-4 border-t border-gray-200 text-xs text-gray-400 text-center">
+          Confidential — Trilogy Digital Internal Use Only
+        </div>
+      )}
+    </div>
+  )
+}

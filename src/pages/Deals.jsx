@@ -8,12 +8,23 @@ import Button from '../components/ui/Button'
 import SearchBar from '../components/ui/SearchBar'
 import EmptyState from '../components/ui/EmptyState'
 import { DEAL_STAGES } from '../lib/constants'
-import { fmt } from '../lib/commission'
+import { fmt, getMarginTier } from '../lib/commission'
 import { PageSpinner } from '../components/ui/Spinner'
 import { clsx } from 'clsx'
 import { format } from 'date-fns'
 
 const PAGE_SIZE = 25
+
+const TIER_DOT = {
+  green: 'bg-green-400',
+  yellow: 'bg-yellow-400',
+  red: 'bg-red-400',
+}
+
+function MarginDot({ tier }) {
+  if (!tier) return null
+  return <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${TIER_DOT[tier]}`} title={`Margin: ${tier}`} />
+}
 
 function DealCard({ deal, onClick }) {
   return (
@@ -22,13 +33,22 @@ function DealCard({ deal, onClick }) {
       className="w-full bg-white border border-gray-100 rounded-xl p-3.5 text-left hover:border-primary-300 hover:shadow-sm transition-all group"
     >
       <div className="flex items-start justify-between mb-2">
-        <p className="text-sm font-semibold text-navy-900 truncate pr-2 leading-tight">{deal.name}</p>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <MarginDot tier={deal._tier} />
+          <p className="text-sm font-semibold text-navy-900 truncate leading-tight">{deal.name}</p>
+        </div>
         <ChevronRight size={14} className="text-gray-300 group-hover:text-primary-400 flex-shrink-0 mt-0.5 transition-colors" />
       </div>
       <p className="text-xs text-gray-500 mb-3 truncate">{deal.company_name}</p>
       <div className="flex items-center justify-between">
-        <span className="text-sm font-bold text-navy-900">{fmt(deal.acv, 2)}</span>
-        <span className="text-xs text-gray-400">{deal.deal_type || 'new'}</span>
+        <div>
+          <p className="text-xs text-gray-400 leading-none mb-0.5">Est. Trilogy Margin</p>
+          <span className="text-sm font-bold text-navy-900">{fmt(deal.acv, 2)}</span>
+          {deal._actualAcv != null && (
+            <p className="text-xs text-teal-600 font-medium mt-0.5">Actual ACV {fmt(deal._actualAcv, 2)}</p>
+          )}
+        </div>
+        <span className="text-xs text-gray-400 self-start">{deal.deal_type || 'new'}</span>
       </div>
     </button>
   )
@@ -97,13 +117,24 @@ function ListView({ deals, onDealClick, page, setPage }) {
               {paginated.map((deal) => (
                 <tr key={deal.id} onClick={() => onDealClick(deal.id)} className="hover:bg-gray-50 cursor-pointer transition-colors">
                   <td className="px-4 py-3.5">
-                    <p className="font-medium text-navy-900 truncate max-w-[160px]">{deal.name}</p>
+                    <div className="flex items-center gap-1.5">
+                      <MarginDot tier={deal._tier} />
+                      <p className="font-medium text-navy-900 truncate max-w-[160px]">{deal.name}</p>
+                    </div>
                     <p className="text-xs text-gray-500 sm:hidden">{deal.company_name}</p>
                   </td>
                   <td className="px-4 py-3.5 hidden sm:table-cell text-gray-600 truncate max-w-[160px]">{deal.company_name}</td>
                   <td className="px-4 py-3.5 hidden md:table-cell"><StageBadge stage={deal.stage} /></td>
                   <td className="px-4 py-3.5 hidden md:table-cell text-gray-500 capitalize">{deal.deal_type || 'new'}</td>
-                  <td className="px-4 py-3.5 text-right font-semibold text-navy-900">{fmt(deal.acv, 2)}</td>
+                  <td className="px-4 py-3.5 text-right">
+                    <p className="text-xs text-gray-400">Est. {fmt(deal.acv, 2)}</p>
+                    {deal._actualAcv != null && (
+                      <p className="font-semibold text-teal-600">{fmt(deal._actualAcv, 2)}</p>
+                    )}
+                    {deal._actualAcv == null && (
+                      <p className="font-semibold text-navy-900">{fmt(deal.acv, 2)}</p>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -239,7 +270,6 @@ export default function Deals() {
       .select('id, name, company_name, stage, deal_type, acv, total_contract_value, contract_start, contract_months')
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
-    // Fallback if deleted_at column doesn't exist yet (migration pending)
     if (error) {
       const { data: fallback } = await supabase
         .from('deals')
@@ -247,7 +277,33 @@ export default function Deals() {
         .order('created_at', { ascending: false })
       data = fallback
     }
-    setDeals(data || [])
+    // Join approval tiers
+    const { data: approvals } = await supabase.from('deal_approvals').select('deal_id, status, margin_pct')
+    const approvalMap = Object.fromEntries((approvals || []).map((a) => [a.deal_id, a]))
+
+    // Fetch actual ACV from products for contracted deals
+    const contractedIds = (data || []).filter((d) => d.stage === 'contracted').map((d) => d.id)
+    let actualAcvMap = {}
+    if (contractedIds.length > 0) {
+      const { data: products } = await supabase
+        .from('deal_products')
+        .select('deal_id, commission_metric, annual_value, yearly_cost, net_revenue, cogs_amount')
+        .in('deal_id', contractedIds)
+      ;(products || []).forEach((p) => {
+        const rev = p.commission_metric === 'GM'
+          ? (p.yearly_cost || ((p.net_revenue || 0) + (p.cogs_amount || 0)))
+          : (p.annual_value || 0)
+        actualAcvMap[p.deal_id] = (actualAcvMap[p.deal_id] || 0) + rev
+      })
+    }
+
+    const dealsWithTier = (data || []).map((d) => {
+      const appr = approvalMap[d.id]
+      const tier = appr?.margin_pct != null ? getMarginTier(d.acv, d.acv * (1 - appr.margin_pct)) : null
+      const actualAcv = actualAcvMap[d.id] ?? null
+      return { ...d, _tier: tier, _approval: appr, _actualAcv: actualAcv }
+    })
+    setDeals(dealsWithTier)
     setLoading(false)
   }
 

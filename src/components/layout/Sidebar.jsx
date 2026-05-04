@@ -15,10 +15,12 @@ import {
   ChevronRight,
   X,
   Network,
+  UserCog,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
+import { useUser } from '../../contexts/UserContext'
 
-const NAV = [
+const MANAGER_NAV = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/deals', icon: Handshake, label: 'Deals' },
   { to: '/commission', icon: DollarSign, label: 'Commission' },
@@ -29,13 +31,25 @@ const NAV = [
   { to: '/partners', icon: Network, label: 'Partners' },
   { to: '/categories', icon: Tag, label: 'Categories' },
   { to: '/people', icon: Users, label: 'People' },
-  { to: '/companies', icon: Building2, label: 'Companies' },
+  { to: '/customers', icon: Building2, label: 'Customers' },
   { divider: true },
+  { to: '/users', icon: UserCog, label: 'Users' },
   { to: '/settings', icon: Settings, label: 'Settings' },
+]
+
+const SALES_NAV = [
+  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/deals', icon: Handshake, label: 'Deals' },
+]
+
+const SUPPORT_NAV = [
+  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/deals', icon: Handshake, label: 'Deals' },
 ]
 
 export default function Sidebar({ open, onClose }) {
   const navigate = useNavigate()
+  const { isManager, isSales } = useUser()
 
   async function handleSignOut() {
     await supabase.auth.signOut()
@@ -77,7 +91,7 @@ export default function Sidebar({ open, onClose }) {
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-0.5">
-          {NAV.map((item, i) => {
+          {(isManager ? MANAGER_NAV : isSales ? SALES_NAV : SUPPORT_NAV).map((item, i) => {
             if (item.divider) {
               return <div key={i} className="my-3 border-t border-navy-700" />
             }

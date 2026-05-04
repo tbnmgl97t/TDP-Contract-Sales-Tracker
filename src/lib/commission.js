@@ -142,6 +142,14 @@ export function buildCommissionSchedule(deal, dealProducts, dealTeam) {
       endDate.setMonth(endDate.getMonth() + months)
       endDate.setDate(endDate.getDate() - 1)
 
+      // Cap at the deal's contract end so products with a late billing_start_date
+      // don't schedule commissions beyond the contract period.
+      const dealEndDate = new Date(dealStartDate)
+      dealEndDate.setMonth(dealEndDate.getMonth() + (deal.contract_months || 12))
+      dealEndDate.setDate(dealEndDate.getDate() - 1)
+      if (endDate > dealEndDate) endDate.setTime(dealEndDate.getTime())
+      if (startDate > dealEndDate) return // product starts after contract ends — skip
+
       const calQuarters = buildCalQuarters(startDate, endDate)
       const totalDays = calQuarters.reduce((s, q) => s + q.days, 0)
       calQuarters.forEach(({ year, quarter, days }) => {
@@ -208,4 +216,16 @@ export function fmt(value, decimals = 0) {
 export function fmtPct(value) {
   if (value == null) return '0%'
   return `${(Number(value) * 100).toFixed(1)}%`
+}
+
+/**
+ * Return margin tier: 'green' (≥30%), 'yellow' (15-29%), 'red' (<15%).
+ * Pass acv (Trilogy ACV) and totalCogs. Returns null if no COGS data.
+ */
+export function getMarginTier(acv, totalCogs) {
+  if (!acv || !totalCogs || totalCogs <= 0) return null
+  const pct = (acv - totalCogs) / acv
+  if (pct >= 0.30) return 'green'
+  if (pct >= 0.15) return 'yellow'
+  return 'red'
 }
