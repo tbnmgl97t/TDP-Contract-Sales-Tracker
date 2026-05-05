@@ -115,33 +115,27 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
     }
   }, [item.product_id, item.monthly_quantity, item.unit_price, item.cogs_per_unit, item.monthly_value, item.yearly_cost, item.cogs_amount, item.discount_pct, item.quantity, item._milestone_total, item.billing_months, item.billing_mode, contractMonths, globalRate])
 
-  // Support charge: auto-calculate revenue from selected line items
+  // Support charge: COGS = support% × sum(linked product COGS), Revenue = COGS / (1 - margin%)
   useEffect(() => {
     if (!product?.is_support_charge) return
     const effectiveRate = product.rate_overridden ? product.base_rate : globalRate
     const pct = parseFloat(item.support_pct) ?? parseFloat(product.default_support_pct) ?? 15
+    const margin = parseFloat(item._trilogy_margin_pct)
     const selectedPids = item.support_product_ids || []
     const itemKey = item._id || item.id
-    const baseRevenue = allItems
+    const baseCogs = allItems
       .filter((dp) => {
         const key = dp._id || dp.id
         return key !== itemKey && dp.product_id && selectedPids.includes(dp.product_id)
       })
-      .reduce((sum, dp) => {
-        const dpProd = products.find((p) => p.id === dp.product_id)
-        if (!dpProd) return sum
-        if (dpProd.is_usage_based) return sum + (dp.total_revenue || 0)
-        if (dpProd.commission_metric === 'GM') return sum + (dp.yearly_cost || 0)
-        return sum + (dp.annual_value || 0)
-      }, 0)
-    const revenue = baseRevenue * (pct / 100)
-    const cogsPct = parseFloat(item.support_cogs_pct)
-    const cogs = !isNaN(cogsPct) ? revenue * cogsPct / 100 : 0
+      .reduce((sum, dp) => sum + (dp.cogs_amount || 0), 0)
+    const cogs = baseCogs * (pct / 100)
+    const revenue = (!isNaN(margin) && margin < 100) ? cogs / (1 - margin / 100) : 0
     const commission = calcProductCommission({ commission_metric: 'NAVC/RAV', base_rate: effectiveRate, annual_value: revenue })
     if (Math.abs(revenue - (item.annual_value || 0)) > 0.001 || Math.abs(commission - (item.commission_amount || 0)) > 0.001 || Math.abs(cogs - (item.cogs_amount || 0)) > 0.001) {
       onChange({ ...item, annual_value: revenue, cogs_amount: cogs, commission_amount: commission, commission_metric: 'NAVC/RAV', base_rate: effectiveRate })
     }
-  }, [item.product_id, item.support_pct, item.support_cogs_pct, JSON.stringify(item.support_product_ids), allItems, globalRate])
+  }, [item.product_id, item.support_pct, item._trilogy_margin_pct, JSON.stringify(item.support_product_ids), allItems, globalRate])
 
   return (
     <div className="border border-gray-100 rounded-xl p-4 space-y-3">
@@ -196,9 +190,9 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               billing_months: '',
               billing_mode: selectedProduct?.default_billing_mode || 'monthly',
               support_pct: selectedProduct?.is_support_charge ? (selectedProduct?.default_support_pct ?? 15) : '',
-              support_cogs_pct: selectedProduct?.is_support_charge ? (selectedProduct?.default_support_cogs_pct ?? '') : '',
               support_product_ids: selectedProduct?.is_support_charge ? (item.support_product_ids || []) : [],
               _trilogy_margin_pct: (() => {
+                if (selectedProduct?.is_support_charge) return ''
                 const u = parseFloat(defaults?.unit_price) || 0
                 const c = parseFloat(defaults?.cogs_per_unit) || 0
                 return u > 0 && c > 0 && u >= c ? parseFloat(((1 - c / u) * 100).toFixed(2)) : ''
@@ -360,31 +354,28 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               onChange={(e) => onChange({ ...item, support_pct: parseFloat(e.target.value) || 0 })}
             />
             <Input
-              label="COGS %"
-              type="number" min="0" max="100" step="0.1" suffix="%"
-              hint="Cost as % of support revenue"
-              value={item.support_cogs_pct ?? ''}
-              onChange={(e) => onChange({ ...item, support_cogs_pct: e.target.value === '' ? null : parseFloat(e.target.value) })}
+              label="Trilogy Margin %"
+              type="number" min="0" max="99.9" step="0.1" suffix="%"
+              hint="Applied on top of vendor cost"
+              value={item._trilogy_margin_pct ?? ''}
+              onChange={(e) => onChange({ ...item, _trilogy_margin_pct: e.target.value === '' ? '' : parseFloat(e.target.value) })}
             />
             {(() => {
+              const cogs = item.cogs_amount || 0
               const rev = item.annual_value || 0
-              const cogsPct = parseFloat(item.support_cogs_pct)
-              const cogs = !isNaN(cogsPct) ? rev * cogsPct / 100 : null
-              const marginPct = cogs != null && rev > 0 ? (rev - cogs) / rev : null
+              const marginPct = cogs > 0 && rev > 0 ? (rev - cogs) / rev : null
               return (
                 <div className="space-y-1">
                   <p className="text-xs font-medium text-gray-500">Summary</p>
                   <div className="bg-gray-50 rounded-lg p-3 text-xs space-y-1.5">
                     <div className="flex justify-between">
-                      <span className="text-gray-500">Revenue</span>
-                      <span className="font-medium text-navy-900">{fmt(rev, 2)}</span>
+                      <span className="text-gray-500">COGS</span>
+                      <span className="font-medium text-navy-900">{cogs > 0 ? fmt(cogs, 2) : '—'}</span>
                     </div>
-                    {cogs != null && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">COGS</span>
-                        <span className="font-medium text-navy-900">{fmt(cogs, 2)}</span>
-                      </div>
-                    )}
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Revenue</span>
+                      <span className="font-medium text-navy-900">{rev > 0 ? fmt(rev, 2) : '—'}</span>
+                    </div>
                     {marginPct != null && (
                       <div className="flex justify-between">
                         <span className="text-gray-500">Margin</span>
@@ -418,9 +409,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
                   const dpProd = products.find((p) => p.id === dp.product_id)
                   if (!dpProd) return null
                   const isSelected = (item.support_product_ids || []).includes(dp.product_id)
-                  const dpRevenue = dpProd.is_usage_based
-                    ? (dp.total_revenue || 0)
-                    : dpProd.commission_metric === 'GM' ? (dp.yearly_cost || 0) : (dp.annual_value || 0)
+                  const dpCogs = dp.cogs_amount || 0
                   return (
                     <label key={dp._id || dp.id} className="flex items-center gap-2.5 px-3 py-2.5 cursor-pointer hover:bg-gray-50 transition-colors">
                       <input
@@ -435,7 +424,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
                         className="w-4 h-4 rounded border-gray-300 text-primary-400 focus:ring-primary-400"
                       />
                       <span className="text-sm text-navy-900 flex-1">{dpProd.name}</span>
-                      <span className="text-xs text-gray-400">{fmt(dpRevenue, 0)}</span>
+                      <span className="text-xs text-gray-400">{dpCogs > 0 ? fmt(dpCogs, 0) : '—'}</span>
                     </label>
                   )
                 })}
@@ -869,8 +858,12 @@ export default function NewDeal() {
             billing_months: dp.billing_months || '',
             billing_mode: dp.billing_mode || 'monthly',
             support_product_ids: dp.support_product_ids || [],
-            support_cogs_pct: dp.support_cogs_pct ?? (prod?.default_support_cogs_pct ?? ''),
             _trilogy_margin_pct: (() => {
+              if (prod?.is_support_charge) {
+                const cogs = parseFloat(dp.cogs_amount) || 0
+                const rev = parseFloat(dp.annual_value) || 0
+                return cogs > 0 && rev > cogs ? parseFloat(((1 - cogs / rev) * 100).toFixed(2)) : ''
+              }
               const u = parseFloat(dp.unit_price_snapshot) || 0
               const c = parseFloat(dp.cogs_per_unit_snapshot) || 0
               if (u > 0 && c > 0 && u >= c) return parseFloat(((1 - c / u) * 100).toFixed(2))
