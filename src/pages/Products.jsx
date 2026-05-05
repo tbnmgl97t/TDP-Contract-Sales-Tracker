@@ -117,23 +117,31 @@ function ProductForm({ initial, vendors, categories, globalRate, onSave, onClose
           </div>
         </div>
       )}
-      <div className="flex items-center gap-3">
-        <input
-          id="usage"
-          type="checkbox"
-          checked={form.is_usage_based}
-          onChange={(e) => setForm({ ...form, is_usage_based: e.target.checked })}
-          className="w-4 h-4 rounded border-gray-300 text-primary-400 focus:ring-primary-400"
-        />
-        <label htmlFor="usage" className="text-sm text-navy-900">Usage-based product (e.g., JWX GB/Hours)</label>
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 shrink-0">
+          <input
+            id="usage"
+            type="checkbox"
+            checked={form.is_usage_based}
+            onChange={(e) => setForm({ ...form, is_usage_based: e.target.checked })}
+            className="w-4 h-4 rounded border-gray-300 text-primary-400 focus:ring-primary-400"
+          />
+          <label htmlFor="usage" className="text-sm text-navy-900 whitespace-nowrap">Usage-based (JWX GB/Hours)</label>
+        </div>
+        {form.is_usage_based && (
+          <Input
+            label=""
+            placeholder="Unit label — GB, Hours, Users..."
+            value={form.unit_label || ''}
+            onChange={(e) => setForm({ ...form, unit_label: e.target.value })}
+            className="flex-1"
+          />
+        )}
       </div>
-      {form.is_usage_based && (
-        <Input label="Unit Label" value={form.unit_label || ''} onChange={(e) => setForm({ ...form, unit_label: e.target.value })} placeholder="GB, Hours, Users..." />
-      )}
       {form.is_usage_based && form.commission_metric === 'GM' && (
         <div className="space-y-3">
-          <div className="space-y-1.5">
-            <p className="text-xs font-medium text-navy-900">Default Billing Mode</p>
+          <div className="flex items-center gap-3">
+            <p className="text-xs font-medium text-navy-900 shrink-0">Default Billing Mode</p>
             <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs w-fit">
               {[{ value: 'monthly', label: 'Monthly × Duration' }, { value: 'fixed', label: 'Fixed Contract Total' }].map(({ value, label }) => (
                 <button
@@ -489,7 +497,7 @@ export default function Products() {
         )}
       </Card>
 
-      <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.id ? 'Edit Product' : 'New Product'}>
+      <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.id ? 'Edit Product' : 'New Product'} size="lg">
         {modal !== null && (
           <ProductForm
             initial={modal?.id ? modal : null}
