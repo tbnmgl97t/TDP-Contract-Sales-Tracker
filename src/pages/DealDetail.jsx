@@ -124,7 +124,7 @@ export default function DealDetail() {
       { data: dPartners },
     ] = await Promise.all([
       supabase.from('deals').select('*').eq('id', id).single(),
-      supabase.from('deal_products').select('*, products(name, commission_metric, unit_label)').eq('deal_id', id),
+      supabase.from('deal_products').select('*, products(name, commission_metric, unit_label, is_support_charge)').eq('deal_id', id),
       supabase.from('deal_team').select('*, people(name, role, email)').eq('deal_id', id),
       supabase.from('contracts').select('*, ai_analysis').eq('deal_id', id).order('uploaded_at', { ascending: false }),
       supabase.from('deal_partners').select('*, partners(name)').eq('deal_id', id).order('sort_order'),
@@ -414,8 +414,17 @@ export default function DealDetail() {
   if (loading) return <PageSpinner />
   if (!deal) return <div className="p-8 text-center text-gray-500">Deal not found.</div>
 
+  // For support charges saved before COGS tracking, derive from support_cogs_pct
+  function effectiveCogs(dp) {
+    if (dp.cogs_amount) return dp.cogs_amount
+    if (dp.products?.is_support_charge && dp.support_cogs_pct != null) {
+      return (dp.annual_value || 0) * dp.support_cogs_pct / 100
+    }
+    return 0
+  }
+
   const totalCommission = deal.is_tbn_property ? 0 : dealProducts.reduce((s, p) => s + (p.commission_amount || 0), 0)
-  const totalCogs = dealProducts.reduce((s, p) => s + (p.cogs_amount || 0), 0)
+  const totalCogs = dealProducts.reduce((s, p) => s + effectiveCogs(p), 0)
   const totalRevenue = dealProducts.reduce((s, p) => s + ((p.total_revenue || p.annual_value || p.yearly_cost || 0)), 0)
 
   // ACV calculated from actual products
@@ -728,7 +737,7 @@ export default function DealDetail() {
                       </td>
                       <td className="py-3 hidden sm:table-cell text-gray-500">{dp.commission_metric}</td>
                       <td className="py-3 text-right hidden md:table-cell text-gray-700">{fmt(dp.total_revenue || dp.annual_value || dp.yearly_cost, 2)}</td>
-                      <td className="py-3 text-right hidden md:table-cell text-gray-500">{dp.cogs_amount ? fmt(dp.cogs_amount, 2) : '—'}</td>
+                      <td className="py-3 text-right hidden md:table-cell text-gray-500">{effectiveCogs(dp) > 0 ? fmt(effectiveCogs(dp), 2) : '—'}</td>
                       {isManager && !deal.is_tbn_property && <td className="py-3 text-right font-semibold text-primary-600">{fmt(dp.commission_amount, 2)}</td>}
                     </tr>
                     {hasMilestones && milestones.map((m, i) => (
