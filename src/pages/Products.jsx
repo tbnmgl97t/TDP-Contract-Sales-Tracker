@@ -20,18 +20,22 @@ function ProductForm({ initial, vendors, categories, globalRate, onSave, onClose
       base_rate: globalRate, rate_overridden: false, is_usage_based: false, unit_label: '',
       billing_frequency: 'monthly', is_support_charge: false, default_support_pct: 15, active: true,
     }
+    // Derive _trilogy_margin_pct from unit_price and cogs_per_unit when editing
+    const rate = parseFloat(f._unit_price)
+    const cogs = parseFloat(f._cogs_per_unit)
+    const derivedMarginPct = rate > 0 && cogs > 0 ? parseFloat(((1 - cogs / rate) * 100).toFixed(2)) : ''
     // Normalize legacy margin type values
     if (!f.default_margin_type || ['amount', 'per_item'].includes(f.default_margin_type)) {
-      return { ...f, default_margin_type: 'fixed', billing_frequency: f.billing_frequency || 'monthly', rate_overridden: f.rate_overridden || false, is_support_charge: f.is_support_charge || false, default_support_pct: f.default_support_pct ?? 15 }
+      return { ...f, default_margin_type: 'fixed', billing_frequency: f.billing_frequency || 'monthly', rate_overridden: f.rate_overridden || false, is_support_charge: f.is_support_charge || false, default_support_pct: f.default_support_pct ?? 15, _trilogy_margin_pct: derivedMarginPct }
     }
-    return { ...f, billing_frequency: f.billing_frequency || 'monthly', rate_overridden: f.rate_overridden || false, is_support_charge: f.is_support_charge || false, default_support_pct: f.default_support_pct ?? 15 }
+    return { ...f, billing_frequency: f.billing_frequency || 'monthly', rate_overridden: f.rate_overridden || false, is_support_charge: f.is_support_charge || false, default_support_pct: f.default_support_pct ?? 15, _trilogy_margin_pct: derivedMarginPct }
   })
   const [saving, setSaving] = useState(false)
 
   async function handleSave() {
     if (!form.name) return
     setSaving(true)
-    const { vendors: _v, categories: _c, _unit_price, _cogs_per_unit, ...rest } = form
+    const { vendors: _v, categories: _c, _unit_price, _cogs_per_unit, _trilogy_margin_pct: _tmp, ...rest } = form
     const data = {
       ...rest,
       base_rate: parseFloat(rest.base_rate) || 0.07,
@@ -143,20 +147,77 @@ function ProductForm({ initial, vendors, categories, globalRate, onSave, onClose
               ))}
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-3">
             <CurrencyInput
-              label="Default Unit Price"
-              hint="Revenue per unit — pre-fills on deals"
-              value={form._unit_price || ''}
-              onChange={(v) => setForm({ ...form, _unit_price: v })}
+              label={`COGS/Unit (per ${form.unit_label || 'unit'})`}
+              value={form._cogs_per_unit || ''}
+              onChange={(v) => {
+                const cogs = parseFloat(v) || 0
+                const pct = parseFloat(form._trilogy_margin_pct)
+                let rate = form._unit_price
+                if (!isNaN(pct) && pct >= 0 && pct < 100 && cogs > 0) {
+                  rate = parseFloat((cogs / (1 - pct / 100)).toFixed(4))
+                }
+                setForm({ ...form, _cogs_per_unit: v, _unit_price: rate })
+              }}
+            />
+            <Input
+              label="Trilogy Margin %"
+              type="number"
+              min="0"
+              max="99.9"
+              step="0.1"
+              suffix="%"
+              hint={form._cogs_per_unit && form._trilogy_margin_pct !== '' && parseFloat(form._trilogy_margin_pct) >= 0
+                ? `Rate: $${(parseFloat(form._cogs_per_unit) / (1 - parseFloat(form._trilogy_margin_pct) / 100)).toFixed(4)}`
+                : undefined}
+              value={form._trilogy_margin_pct ?? ''}
+              onChange={(e) => {
+                const pct = e.target.value
+                const pctNum = parseFloat(pct)
+                const cogs = parseFloat(form._cogs_per_unit) || 0
+                const rate = (!isNaN(pctNum) && pctNum >= 0 && pctNum < 100 && cogs > 0)
+                  ? parseFloat((cogs / (1 - pctNum / 100)).toFixed(4))
+                  : form._unit_price
+                setForm({ ...form, _trilogy_margin_pct: pct, _unit_price: rate })
+              }}
             />
             <CurrencyInput
-              label="Default COGS / Unit"
-              hint="Cost per unit — pre-fills on deals"
-              value={form._cogs_per_unit || ''}
-              onChange={(v) => setForm({ ...form, _cogs_per_unit: v })}
+              label={`Rate (per ${form.unit_label || 'unit'})`}
+              hint="COGS ÷ (1 − margin%)"
+              value={form._unit_price != null && form._unit_price !== '' ? parseFloat(Number(form._unit_price).toFixed(4)) : ''}
+              onChange={(v) => {
+                const rate = parseFloat(v) || 0
+                const cogs = parseFloat(form._cogs_per_unit) || 0
+                const pct = rate > 0 && cogs > 0 ? parseFloat(((1 - cogs / rate) * 100).toFixed(2)) : ''
+                setForm({ ...form, _unit_price: v, _trilogy_margin_pct: pct })
+              }}
             />
           </div>
+          {(() => {
+            const cogs = parseFloat(form._cogs_per_unit) || 0
+            const rate = parseFloat(form._unit_price) || 0
+            const marginPct = rate > 0 && cogs > 0 ? (rate - cogs) / rate : null
+            if (!cogs && !rate) return null
+            return (
+              <div className="bg-gray-50 rounded-lg p-3 grid grid-cols-3 gap-3 text-xs">
+                <div>
+                  <p className="text-gray-500">COGS/Unit</p>
+                  <p className="font-medium text-navy-900 mt-0.5">{cogs > 0 ? `$${cogs.toFixed(4)}` : '—'}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Rate/Unit</p>
+                  <p className="font-bold text-navy-900 mt-0.5">{rate > 0 ? `$${rate.toFixed(4)}` : '—'}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Margin</p>
+                  <p className={`font-bold mt-0.5 ${marginPct == null ? 'text-gray-400' : marginPct >= 0.30 ? 'text-green-600' : marginPct >= 0.15 ? 'text-yellow-600' : 'text-red-600'}`}>
+                    {marginPct != null ? `${(marginPct * 100).toFixed(1)}%` : '—'}
+                  </p>
+                </div>
+              </div>
+            )
+          })()}
         </div>
       )}
       {form.commission_metric !== 'GM' && !form.is_support_charge && (
