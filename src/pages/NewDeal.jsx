@@ -135,11 +135,13 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
         return sum + (dp.annual_value || 0)
       }, 0)
     const revenue = baseRevenue * (pct / 100)
+    const cogsPct = parseFloat(item.support_cogs_pct)
+    const cogs = !isNaN(cogsPct) ? revenue * cogsPct / 100 : 0
     const commission = calcProductCommission({ commission_metric: 'NAVC/RAV', base_rate: effectiveRate, annual_value: revenue })
-    if (Math.abs(revenue - (item.annual_value || 0)) > 0.001 || Math.abs(commission - (item.commission_amount || 0)) > 0.001) {
-      onChange({ ...item, annual_value: revenue, commission_amount: commission, commission_metric: 'NAVC/RAV', base_rate: effectiveRate })
+    if (Math.abs(revenue - (item.annual_value || 0)) > 0.001 || Math.abs(commission - (item.commission_amount || 0)) > 0.001 || Math.abs(cogs - (item.cogs_amount || 0)) > 0.001) {
+      onChange({ ...item, annual_value: revenue, cogs_amount: cogs, commission_amount: commission, commission_metric: 'NAVC/RAV', base_rate: effectiveRate })
     }
-  }, [item.product_id, item.support_pct, JSON.stringify(item.support_product_ids), allItems, globalRate])
+  }, [item.product_id, item.support_pct, item.support_cogs_pct, JSON.stringify(item.support_product_ids), allItems, globalRate])
 
   return (
     <div className="border border-gray-100 rounded-xl p-4 space-y-3">
