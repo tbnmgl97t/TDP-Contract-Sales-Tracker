@@ -294,13 +294,48 @@ function ProductForm({ initial, vendors, categories, globalRate, onSave, onClose
         <label htmlFor="support_charge" className="text-sm text-navy-900">Support Charge product (% of selected line items)</label>
       </div>
       {form.is_support_charge && (
-        <Input
-          label="Default Support %"
-          type="number" min="0" max="100" step="0.1" suffix="%"
-          hint="Default percentage applied to selected products in a deal"
-          value={form.default_support_pct ?? 15}
-          onChange={(e) => setForm({ ...form, default_support_pct: parseFloat(e.target.value) || 0 })}
-        />
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label="Default Support %"
+              type="number" min="0" max="100" step="0.1" suffix="%"
+              hint="Percentage applied to selected products in a deal"
+              value={form.default_support_pct ?? 15}
+              onChange={(e) => setForm({ ...form, default_support_pct: parseFloat(e.target.value) || 0 })}
+            />
+            <Input
+              label="Default COGS %"
+              type="number" min="0" max="100" step="0.1" suffix="%"
+              hint="Cost as % of support revenue"
+              value={form.default_support_cogs_pct ?? ''}
+              onChange={(e) => setForm({ ...form, default_support_cogs_pct: e.target.value === '' ? null : parseFloat(e.target.value) })}
+            />
+          </div>
+          {(() => {
+            const supportPct = parseFloat(form.default_support_pct) || 0
+            const cogsPct = parseFloat(form.default_support_cogs_pct)
+            if (!supportPct || isNaN(cogsPct)) return null
+            const marginPct = (100 - cogsPct) / 100
+            return (
+              <div className="bg-gray-50 rounded-lg p-3 grid grid-cols-3 gap-3 text-xs">
+                <div>
+                  <p className="text-gray-500">Support Rate</p>
+                  <p className="font-medium text-navy-900 mt-0.5">{supportPct}% of products</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">COGS</p>
+                  <p className="font-medium text-navy-900 mt-0.5">{cogsPct}% of revenue</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Margin</p>
+                  <p className={`font-bold mt-0.5 ${marginPct >= 0.30 ? 'text-green-600' : marginPct >= 0.15 ? 'text-yellow-600' : 'text-red-600'}`}>
+                    {((marginPct) * 100).toFixed(1)}%
+                  </p>
+                </div>
+              </div>
+            )
+          })()}
+        </div>
       )}
       {form.commission_metric === 'GM' && !form.is_usage_based && (
         <div className="space-y-3">

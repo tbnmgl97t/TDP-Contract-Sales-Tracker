@@ -191,6 +191,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               billing_months: '',
               billing_mode: selectedProduct?.default_billing_mode || 'monthly',
               support_pct: selectedProduct?.is_support_charge ? (selectedProduct?.default_support_pct ?? 15) : '',
+              support_cogs_pct: selectedProduct?.is_support_charge ? (selectedProduct?.default_support_cogs_pct ?? '') : '',
               support_product_ids: selectedProduct?.is_support_charge ? (item.support_product_ids || []) : [],
               _trilogy_margin_pct: '',
             })
@@ -342,20 +343,57 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
 
       {product && isSupportCharge && (
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <Input
               label="Support %"
               type="number" min="0" max="100" step="0.1" suffix="%"
               value={item.support_pct ?? (product.default_support_pct ?? 15)}
               onChange={(e) => onChange({ ...item, support_pct: parseFloat(e.target.value) || 0 })}
             />
-            <div className="space-y-1">
-              <p className="text-xs font-medium text-gray-500">Calculated Revenue</p>
-              <div className="bg-primary-50 rounded-lg p-3 text-xs">
-                <p className="font-bold text-primary-600">{fmt(item.annual_value || 0, 2)}</p>
-                {isManager && !isTbn && <p className="text-gray-500 mt-0.5">Commission: {fmt(item.commission_amount || 0, 2)}</p>}
-              </div>
-            </div>
+            <Input
+              label="COGS %"
+              type="number" min="0" max="100" step="0.1" suffix="%"
+              hint="Cost as % of support revenue"
+              value={item.support_cogs_pct ?? ''}
+              onChange={(e) => onChange({ ...item, support_cogs_pct: e.target.value === '' ? null : parseFloat(e.target.value) })}
+            />
+            {(() => {
+              const rev = item.annual_value || 0
+              const cogsPct = parseFloat(item.support_cogs_pct)
+              const cogs = !isNaN(cogsPct) ? rev * cogsPct / 100 : null
+              const marginPct = cogs != null && rev > 0 ? (rev - cogs) / rev : null
+              return (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-gray-500">Summary</p>
+                  <div className="bg-gray-50 rounded-lg p-3 text-xs space-y-1.5">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Revenue</span>
+                      <span className="font-medium text-navy-900">{fmt(rev, 2)}</span>
+                    </div>
+                    {cogs != null && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">COGS</span>
+                        <span className="font-medium text-navy-900">{fmt(cogs, 2)}</span>
+                      </div>
+                    )}
+                    {marginPct != null && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Margin</span>
+                        <span className={`font-bold ${marginPct >= 0.30 ? 'text-green-600' : marginPct >= 0.15 ? 'text-yellow-600' : 'text-red-600'}`}>
+                          {(marginPct * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                    )}
+                    {isManager && !isTbn && (
+                      <div className="flex justify-between border-t border-gray-200 pt-1.5 mt-1.5">
+                        <span className="text-gray-500">Commission</span>
+                        <span className="font-bold text-primary-600">{fmt(item.commission_amount || 0, 2)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
           </div>
           <div>
             <p className="text-xs font-medium text-gray-500 mb-1.5">Apply to line items</p>
@@ -822,6 +860,7 @@ export default function NewDeal() {
             billing_months: dp.billing_months || '',
             billing_mode: dp.billing_mode || 'monthly',
             support_product_ids: dp.support_product_ids || [],
+            support_cogs_pct: dp.support_cogs_pct ?? (prod?.default_support_cogs_pct ?? ''),
             _trilogy_margin_pct: (() => {
               const u = parseFloat(dp.unit_price_snapshot) || 0
               const c = parseFloat(dp.cogs_per_unit_snapshot) || 0
