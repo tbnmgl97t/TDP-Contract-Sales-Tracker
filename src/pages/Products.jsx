@@ -31,17 +31,26 @@ function ProductForm({ initial, vendors, categories, globalRate, onSave, onClose
   async function handleSave() {
     if (!form.name) return
     setSaving(true)
-    const { vendors: _v, categories: _c, ...rest } = form
+    const { vendors: _v, categories: _c, _unit_price, _cogs_per_unit, ...rest } = form
     const data = {
       ...rest,
       base_rate: parseFloat(rest.base_rate) || 0.07,
       vendor_id: rest.vendor_id || null,
       category_id: rest.category_id || null,
     }
+    let productId = initial?.id
     if (initial?.id) {
       await supabase.from('products').update(data).eq('id', initial.id)
     } else {
-      await supabase.from('products').insert([data])
+      const { data: inserted } = await supabase.from('products').insert([data]).select('id').single()
+      productId = inserted?.id
+    }
+    if (form.is_usage_based && productId && (_unit_price !== '' || _cogs_per_unit !== '')) {
+      await supabase.from('product_pricing_params').insert({
+        product_id: productId,
+        unit_price: parseFloat(_unit_price) || null,
+        cogs_per_unit: parseFloat(_cogs_per_unit) || null,
+      })
     }
     onSave()
     setSaving(false)
@@ -116,6 +125,81 @@ function ProductForm({ initial, vendors, categories, globalRate, onSave, onClose
       </div>
       {form.is_usage_based && (
         <Input label="Unit Label" value={form.unit_label || ''} onChange={(e) => setForm({ ...form, unit_label: e.target.value })} placeholder="GB, Hours, Users..." />
+      )}
+      {form.is_usage_based && form.commission_metric === 'GM' && (
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-navy-900">Default Billing Mode</p>
+            <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs w-fit">
+              {[{ value: 'monthly', label: 'Monthly × Duration' }, { value: 'fixed', label: 'Fixed Contract Total' }].map(({ value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setForm({ ...form, default_billing_mode: value })}
+                  className={`px-3 py-1.5 transition-colors ${(form.default_billing_mode || 'monthly') === value ? 'bg-primary-50 text-primary-700 font-medium' : 'text-gray-500 hover:bg-gray-50'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <CurrencyInput
+              label="Default Unit Price"
+              hint="Revenue per unit — pre-fills on deals"
+              value={form._unit_price || ''}
+              onChange={(v) => setForm({ ...form, _unit_price: v })}
+            />
+            <CurrencyInput
+              label="Default COGS / Unit"
+              hint="Cost per unit — pre-fills on deals"
+              value={form._cogs_per_unit || ''}
+              onChange={(v) => setForm({ ...form, _cogs_per_unit: v })}
+            />
+          </div>
+        </div>
+      )}
+      {form.commission_metric !== 'GM' && !form.is_support_charge && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-4">
+            <CurrencyInput
+              label="Default COGS (optional)"
+              hint="Vendor cost — pre-fills on each deal"
+              value={form.default_cogs || ''}
+              onChange={(v) => setForm({ ...form, default_cogs: v === '' ? null : v })}
+            />
+            <CurrencyInput
+              label="Default List Price (optional)"
+              hint="Selling price — pre-fills on each deal"
+              value={form.default_list_price || ''}
+              onChange={(v) => setForm({ ...form, default_list_price: v === '' ? null : v })}
+            />
+          </div>
+          {(() => {
+            const cogs = parseFloat(form.default_cogs) || 0
+            const list = parseFloat(form.default_list_price) || 0
+            const marginPct = list > 0 && cogs > 0 ? (list - cogs) / list : null
+            if (marginPct == null) return null
+            return (
+              <div className="bg-gray-50 rounded-lg p-3 grid grid-cols-3 gap-3 text-xs">
+                <div>
+                  <p className="text-gray-500">COGS</p>
+                  <p className="font-medium text-navy-900 mt-0.5">${cogs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">List Price</p>
+                  <p className="font-bold text-navy-900 mt-0.5">${list.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Margin</p>
+                  <p className={`font-bold mt-0.5 ${marginPct >= 0.30 ? 'text-green-600' : marginPct >= 0.15 ? 'text-yellow-600' : 'text-red-600'}`}>
+                    {(marginPct * 100).toFixed(1)}%
+                  </p>
+                </div>
+              </div>
+            )
+          })()}
+        </div>
       )}
       <div className="flex items-center gap-3">
         <input
@@ -321,7 +405,14 @@ export default function Products() {
                     </td>
                     <td className="px-4 py-3.5 text-right">
                       <div className="flex justify-end gap-1">
-                        <button onClick={() => setModal(p)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-navy-900 transition-colors">
+                        <button onClick={async () => {
+                          if (p.is_usage_based) {
+                            const { data: pp } = await supabase.from('product_pricing_params').select('*').eq('product_id', p.id).order('effective_date', { ascending: false }).limit(1).maybeSingle()
+                            setModal({ ...p, _unit_price: pp?.unit_price ?? '', _cogs_per_unit: pp?.cogs_per_unit ?? '' })
+                          } else {
+                            setModal(p)
+                          }
+                        }} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-navy-900 transition-colors">
                           <Pencil size={14} />
                         </button>
                         <button onClick={() => setDeleteItem(p)} className="p-1.5 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-600 transition-colors">

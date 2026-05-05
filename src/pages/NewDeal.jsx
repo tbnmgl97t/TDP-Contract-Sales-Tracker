@@ -11,7 +11,7 @@ import { DEAL_STAGES, DEAL_TYPES } from '../lib/constants'
 import { calcJwxValues, calcProductCommission, calcSpif, fmt, getMarginTier } from '../lib/commission'
 import { PageSpinner } from '../components/ui/Spinner'
 
-function ProductRow({ item, allItems, products, vendors, pricingMap, contractMonths, contractEnd, globalRate, onChange, onRemove, onMoveUp, onMoveDown, isFirst, isLast, isManager }) {
+function ProductRow({ item, allItems, products, vendors, pricingMap, contractMonths, contractEnd, globalRate, onChange, onRemove, onMoveUp, onMoveDown, isFirst, isLast, isManager, isTbn }) {
   const product = products.find((p) => p.id === item.product_id)
   const isUsageBased = product?.is_usage_based
   const isGM = product?.commission_metric === 'GM'
@@ -188,7 +188,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               _milestone_total: 0,
               billing_start_date: '',
               billing_months: '',
-              billing_mode: 'monthly',
+              billing_mode: selectedProduct?.default_billing_mode || 'monthly',
               support_pct: selectedProduct?.is_support_charge ? (selectedProduct?.default_support_pct ?? 15) : '',
               support_product_ids: selectedProduct?.is_support_charge ? (item.support_product_ids || []) : [],
               _trilogy_margin_pct: '',
@@ -276,7 +276,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               }}
             />
             <CurrencyInput
-              label={`Effective Rate (per ${product.unit_label || 'unit'})`}
+              label={`Rate (per ${product.unit_label || 'unit'})`}
               hint="COGS ÷ (1 − margin%)"
               disabled={!isManager}
               value={item.unit_price != null && item.unit_price !== '' ? parseFloat(Number(item.unit_price).toFixed(4)) : ''}
@@ -288,27 +288,39 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               }}
             />
           </div>
-          <div className={`bg-gray-50 rounded-lg p-3 grid gap-3 text-xs ${isManager ? 'grid-cols-4' : 'grid-cols-3'}`}>
-            <div>
-              <p className="text-gray-500">{billingMode === 'fixed' ? 'Contract Total' : 'Revenue'}</p>
-              <p className="font-medium text-navy-900 mt-0.5">{fmt(item.total_revenue, 2)}</p>
-              {billingMode === 'fixed' && <p className="text-gray-400 mt-0.5">{fmt(item.monthly_cost, 2)}/mo</p>}
-            </div>
-            <div>
-              <p className="text-gray-500">COGS</p>
-              <p className="font-medium text-navy-900 mt-0.5">{fmt(item.cogs_amount, 2)}</p>
-            </div>
-            <div>
-              <p className="text-gray-500">Net Revenue</p>
-              <p className="font-bold text-navy-900 mt-0.5">{fmt(item.net_revenue, 2)}</p>
-            </div>
-            {isManager && (
-              <div>
-                <p className="text-gray-500">Commission</p>
-                <p className="font-bold text-primary-600 mt-0.5">{fmt(item.commission_amount, 2)}</p>
+          {(() => {
+            const marginPct = item.total_revenue > 0 ? item.net_revenue / item.total_revenue : null
+            const cols = isManager && !isTbn ? 'grid-cols-5' : 'grid-cols-4'
+            return (
+              <div className={`bg-gray-50 rounded-lg p-3 grid gap-3 text-xs ${cols}`}>
+                <div>
+                  <p className="text-gray-500">{billingMode === 'fixed' ? 'Contract Total' : 'Revenue'}</p>
+                  <p className="font-medium text-navy-900 mt-0.5">{fmt(item.total_revenue, 2)}</p>
+                  {billingMode === 'fixed' && <p className="text-gray-400 mt-0.5">{fmt(item.monthly_cost, 2)}/mo</p>}
+                </div>
+                <div>
+                  <p className="text-gray-500">COGS</p>
+                  <p className="font-medium text-navy-900 mt-0.5">{fmt(item.cogs_amount, 2)}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Net Revenue</p>
+                  <p className="font-bold text-navy-900 mt-0.5">{fmt(item.net_revenue, 2)}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Margin</p>
+                  <p className={`font-bold mt-0.5 ${marginPct == null ? 'text-gray-400' : marginPct >= 0.30 ? 'text-green-600' : marginPct >= 0.15 ? 'text-yellow-600' : 'text-red-600'}`}>
+                    {marginPct != null ? `${(marginPct * 100).toFixed(1)}%` : '—'}
+                  </p>
+                </div>
+                {isManager && !isTbn && (
+                  <div>
+                    <p className="text-gray-500">Commission</p>
+                    <p className="font-bold text-primary-600 mt-0.5">{fmt(item.commission_amount, 2)}</p>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            )
+          })()}
         </div>
       )}
 
@@ -325,7 +337,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               <p className="text-xs font-medium text-gray-500">Calculated Revenue</p>
               <div className="bg-primary-50 rounded-lg p-3 text-xs">
                 <p className="font-bold text-primary-600">{fmt(item.annual_value || 0, 2)}</p>
-                {isManager && <p className="text-gray-500 mt-0.5">Commission: {fmt(item.commission_amount || 0, 2)}</p>}
+                {isManager && !isTbn && <p className="text-gray-500 mt-0.5">Commission: {fmt(item.commission_amount || 0, 2)}</p>}
               </div>
             </div>
           </div>
@@ -450,45 +462,67 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
                 value={item.discount_pct || ''}
                 onChange={(e) => handleGMChange({ ...item, discount_pct: parseFloat(e.target.value) || 0 })}
               />
-              {isManager && (
-                <div className="space-y-1">
-                  <p className="text-xs font-medium text-gray-500">Commission</p>
-                  <div className="bg-primary-50 rounded-lg p-3 text-xs">
-                    <p className="text-gray-500">Net Revenue</p>
-                    <p className="font-semibold text-navy-900">{fmt(item.net_revenue, 2)}</p>
-                    <p className="text-primary-600 font-bold mt-1">{fmt(item.commission_amount, 2)}</p>
-                  </div>
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-gray-500">{isManager && !isTbn ? 'Commission' : 'Margin'}</p>
+                <div className="bg-primary-50 rounded-lg p-3 text-xs">
+                  {(() => {
+                    const rev = parseFloat(item.list_price) || 0
+                    const cogs = parseFloat(item.cogs_amount) || 0
+                    const marginPct = rev > 0 ? (rev - cogs) / rev : null
+                    return marginPct != null ? (
+                      <p className={`font-bold ${marginPct >= 0.30 ? 'text-green-600' : marginPct >= 0.15 ? 'text-yellow-600' : 'text-red-600'}`}>
+                        {(marginPct * 100).toFixed(1)}%
+                      </p>
+                    ) : null
+                  })()}
+                  {isManager && !isTbn && (
+                    <>
+                      <p className="text-gray-500 mt-1">Net Revenue</p>
+                      <p className="font-semibold text-navy-900">{fmt(item.net_revenue, 2)}</p>
+                      <p className="text-primary-600 font-bold mt-1">{fmt(item.commission_amount, 2)}</p>
+                    </>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
           )}
 
-          {(isQuantityBased || gmType === 'percent') && (
-            <div className={`bg-gray-50 rounded-lg p-3 grid gap-3 text-xs ${isManager ? 'grid-cols-4' : 'grid-cols-3'}`}>
-              <div>
-                <p className="text-gray-500">COGS</p>
-                <p className="font-medium text-navy-900 mt-0.5">{fmt(item.cogs_amount, 2)}</p>
-              </div>
-              <div>
-                <p className="text-gray-500">
-                  {gmType === 'percent'
-                    ? `List Price (×${(1 + (parseFloat(item.markup_pct) || 0) / 100).toFixed(2)})`
-                    : 'List Price'}
-                </p>
-                <p className="font-medium text-navy-900 mt-0.5">{fmt(item.list_price, 2)}</p>
-              </div>
-              <div>
-                <p className="text-gray-500">Revenue (after disc.)</p>
-                <p className="font-bold text-navy-900 mt-0.5">{fmt(item.yearly_cost, 2)}</p>
-              </div>
-              {isManager && (
+          {(isQuantityBased || gmType === 'percent') && (() => {
+            const marginPct = item.yearly_cost > 0 ? (item.yearly_cost - (parseFloat(item.cogs_amount) || 0)) / item.yearly_cost : null
+            const cols = isManager && !isTbn ? 'grid-cols-5' : 'grid-cols-4'
+            return (
+              <div className={`bg-gray-50 rounded-lg p-3 grid gap-3 text-xs ${cols}`}>
                 <div>
-                  <p className="text-gray-500">Commission</p>
-                  <p className="font-bold text-primary-600 mt-0.5">{fmt(item.commission_amount, 2)}</p>
+                  <p className="text-gray-500">COGS</p>
+                  <p className="font-medium text-navy-900 mt-0.5">{fmt(item.cogs_amount, 2)}</p>
                 </div>
-              )}
-            </div>
-          )}
+                <div>
+                  <p className="text-gray-500">
+                    {gmType === 'percent'
+                      ? `List Price (×${(1 + (parseFloat(item.markup_pct) || 0) / 100).toFixed(2)})`
+                      : 'List Price'}
+                  </p>
+                  <p className="font-medium text-navy-900 mt-0.5">{fmt(item.list_price, 2)}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Revenue (after disc.)</p>
+                  <p className="font-bold text-navy-900 mt-0.5">{fmt(item.yearly_cost, 2)}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Margin</p>
+                  <p className={`font-bold mt-0.5 ${marginPct == null ? 'text-gray-400' : marginPct >= 0.30 ? 'text-green-600' : marginPct >= 0.15 ? 'text-yellow-600' : 'text-red-600'}`}>
+                    {marginPct != null ? `${(marginPct * 100).toFixed(1)}%` : '—'}
+                  </p>
+                </div>
+                {isManager && !isTbn && (
+                  <div>
+                    <p className="text-gray-500">Commission</p>
+                    <p className="font-bold text-primary-600 mt-0.5">{fmt(item.commission_amount, 2)}</p>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
         </div>
       )}
 
@@ -553,41 +587,78 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               </button>
             </div>
           ))}
-          {(item.milestones || []).length > 0 && (
-            <div className="bg-primary-50 rounded-lg p-3 text-xs flex items-center justify-between">
-              {isManager ? (
-                <>
-                  <span className="text-gray-500">Total Value → Commission ({((product.base_rate || 0.07) * 100).toFixed(0)}%)</span>
-                  <span className="font-bold text-primary-600">{fmt(item._milestone_total || 0, 2)} → {fmt(item.commission_amount || 0, 2)}</span>
-                </>
-              ) : (
-                <>
-                  <span className="text-gray-500">Total Value</span>
-                  <span className="font-bold text-navy-900">{fmt(item._milestone_total || 0, 2)}</span>
-                </>
-              )}
-            </div>
-          )}
+          {(item.milestones || []).length > 0 && (() => {
+            const rev = item._milestone_total || 0
+            const cogs = parseFloat(item.cogs_amount) || 0
+            const marginPct = rev > 0 ? (rev - cogs) / rev : null
+            const cols = isManager && !isTbn ? 'grid-cols-4' : 'grid-cols-3'
+            return (
+              <div className={`bg-gray-50 rounded-lg p-3 grid gap-3 text-xs ${cols}`}>
+                <div>
+                  <p className="text-gray-500">COGS</p>
+                  <p className="font-medium text-navy-900 mt-0.5">{cogs > 0 ? fmt(cogs, 2) : '—'}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Total Value</p>
+                  <p className="font-bold text-navy-900 mt-0.5">{fmt(rev, 2)}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Margin</p>
+                  <p className={`font-bold mt-0.5 ${marginPct == null ? 'text-gray-400' : marginPct >= 0.30 ? 'text-green-600' : marginPct >= 0.15 ? 'text-yellow-600' : 'text-red-600'}`}>
+                    {marginPct != null ? `${(marginPct * 100).toFixed(1)}%` : '—'}
+                  </p>
+                </div>
+                {isManager && !isTbn && (
+                  <div>
+                    <p className="text-gray-500">Commission</p>
+                    <p className="font-bold text-primary-600 mt-0.5">{fmt(item.commission_amount || 0, 2)}</p>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
         </div>
       )}
 
-      {product && !isGM && product.billing_frequency !== 'milestone' && (
-        <div className="grid grid-cols-2 gap-3">
-          <CurrencyInput
-            label={product.billing_frequency === 'yearly' ? 'Annual Value' : product.billing_frequency === 'one_time' ? 'One-time Value' : 'Monthly Value'}
-            value={item.monthly_value || ''}
-            onChange={(v) => onChange({ ...item, monthly_value: parseFloat(v) || 0 })}
-          />
-          <div className="space-y-1">
-            <p className="text-xs font-medium text-gray-500">{isManager ? 'Commission (NAVC/RAV)' : 'Total Value'}</p>
-            <div className="bg-primary-50 rounded-lg p-3 text-xs">
-              <p className="text-gray-500">{product.billing_frequency === 'monthly' ? `Total Value (×${parseInt(item.billing_months) || contractMonths} mo)` : 'Total Value'}</p>
-              <p className="font-semibold text-navy-900">{fmt(item.annual_value, 2)}</p>
-              {isManager && <p className="text-primary-600 font-bold mt-1">{fmt(item.commission_amount, 2)}</p>}
+      {product && !isGM && product.billing_frequency !== 'milestone' && (() => {
+        const rev = item.annual_value || 0
+        const cogs = parseFloat(item.cogs_amount) || 0
+        const marginPct = rev > 0 ? (rev - cogs) / rev : null
+        const cols = isManager && !isTbn ? 'grid-cols-4' : 'grid-cols-3'
+        const valueLabel = product.billing_frequency === 'yearly' ? 'Annual Value' : product.billing_frequency === 'one_time' ? 'One-time Value' : 'Monthly Value'
+        const totalLabel = product.billing_frequency === 'monthly' ? `Total (×${parseInt(item.billing_months) || contractMonths} mo)` : 'Total Value'
+        return (
+          <div className="space-y-3">
+            <CurrencyInput
+              label={valueLabel}
+              value={item.monthly_value || ''}
+              onChange={(v) => onChange({ ...item, monthly_value: parseFloat(v) || 0 })}
+            />
+            <div className={`bg-gray-50 rounded-lg p-3 grid gap-3 text-xs ${cols}`}>
+              <div>
+                <p className="text-gray-500">COGS</p>
+                <p className="font-medium text-navy-900 mt-0.5">{cogs > 0 ? fmt(cogs, 2) : '—'}</p>
+              </div>
+              <div>
+                <p className="text-gray-500">{totalLabel}</p>
+                <p className="font-bold text-navy-900 mt-0.5">{fmt(rev, 2)}</p>
+              </div>
+              <div>
+                <p className="text-gray-500">Margin</p>
+                <p className={`font-bold mt-0.5 ${marginPct == null ? 'text-gray-400' : marginPct >= 0.30 ? 'text-green-600' : marginPct >= 0.15 ? 'text-yellow-600' : 'text-red-600'}`}>
+                  {marginPct != null ? `${(marginPct * 100).toFixed(1)}%` : '—'}
+                </p>
+              </div>
+              {isManager && !isTbn && (
+                <div>
+                  <p className="text-gray-500">Commission</p>
+                  <p className="font-bold text-primary-600 mt-0.5">{fmt(item.commission_amount, 2)}</p>
+                </div>
+              )}
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {product && !isUsageBased && product.billing_frequency !== 'milestone' && (
         <details className="group">
@@ -1138,6 +1209,7 @@ export default function NewDeal() {
               isFirst={i === 0}
               isLast={i === dealProducts.length - 1}
               isManager={isManager}
+              isTbn={form.is_tbn_property}
             />
           ))}
           <Button size="sm" variant="secondary" onClick={addProduct} icon={<Plus size={14} />}>Add Product</Button>

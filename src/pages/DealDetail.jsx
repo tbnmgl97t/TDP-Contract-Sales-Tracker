@@ -414,7 +414,7 @@ export default function DealDetail() {
   if (loading) return <PageSpinner />
   if (!deal) return <div className="p-8 text-center text-gray-500">Deal not found.</div>
 
-  const totalCommission = dealProducts.reduce((s, p) => s + (p.commission_amount || 0), 0)
+  const totalCommission = deal.is_tbn_property ? 0 : dealProducts.reduce((s, p) => s + (p.commission_amount || 0), 0)
   const totalCogs = dealProducts.reduce((s, p) => s + (p.cogs_amount || 0), 0)
   const totalRevenue = dealProducts.reduce((s, p) => s + ((p.total_revenue || p.annual_value || p.yearly_cost || 0)), 0)
 
@@ -653,10 +653,9 @@ export default function DealDetail() {
         </Card>
 
         {/* Team */}
-        <Card>
+        {dealTeam.length > 0 && <Card>
           <CardHeader title="Team" />
           <div className="space-y-2">
-            {dealTeam.length === 0 && <p className="text-sm text-gray-400">No team members assigned.</p>}
             {salesTeam.map((m) => {
               const isOwnRow = m.people?.email === profile?.email
               const myCommission = totalCommission * ((m.commission_percent || 0) / 100)
@@ -695,12 +694,12 @@ export default function DealDetail() {
               )
             })}
           </div>
-        </Card>
+        </Card>}
       </div>
 
       {/* Products */}
       <Card>
-        <CardHeader title="Products & Services" subtitle={isManager ? `Total Commission: ${fmt(totalCommission, 2)}` : undefined} />
+        <CardHeader title="Products & Services" subtitle={isManager && !deal.is_tbn_property ? `Total Commission: ${fmt(totalCommission, 2)}` : undefined} />
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -709,7 +708,7 @@ export default function DealDetail() {
                 <th className="text-left py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden sm:table-cell">Metric</th>
                 <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">Revenue</th>
                 <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">COGS</th>
-                {isManager && <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide">Commission</th>}
+                {isManager && !deal.is_tbn_property && <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide">Commission</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -723,7 +722,7 @@ export default function DealDetail() {
                       <td className="py-3 hidden sm:table-cell text-gray-500">{dp.commission_metric}</td>
                       <td className="py-3 text-right hidden md:table-cell text-gray-700">{fmt(dp.total_revenue || dp.annual_value || dp.yearly_cost, 2)}</td>
                       <td className="py-3 text-right hidden md:table-cell text-gray-500">{dp.cogs_amount ? fmt(dp.cogs_amount, 2) : '—'}</td>
-                      {isManager && <td className="py-3 text-right font-semibold text-primary-600">{fmt(dp.commission_amount, 2)}</td>}
+                      {isManager && !deal.is_tbn_property && <td className="py-3 text-right font-semibold text-primary-600">{fmt(dp.commission_amount, 2)}</td>}
                     </tr>
                     {hasMilestones && milestones.map((m, i) => (
                       <tr key={`${dp.id}-m-${i}`} className="bg-gray-50/60">
@@ -738,7 +737,7 @@ export default function DealDetail() {
                         </td>
                         <td className="py-2 text-right text-xs font-medium text-gray-600 hidden md:table-cell">{fmt(parseFloat(m.amount), 2)}</td>
                         <td className="py-2 hidden md:table-cell" />
-                        {isManager && (
+                        {isManager && !deal.is_tbn_property && (
                           <td className="py-2 text-right text-xs text-gray-400">
                             {fmt(parseFloat(m.amount) * (dp.base_rate || 0.07), 2)}
                           </td>
@@ -752,7 +751,7 @@ export default function DealDetail() {
                 <td colSpan={2} className="py-2 font-semibold text-navy-900 text-sm">Total</td>
                 <td className="py-2 text-right font-bold text-navy-900 hidden md:table-cell">{fmt(totalRevenue, 2)}</td>
                 <td className="py-2 text-right font-bold text-navy-900 hidden md:table-cell">{fmt(totalCogs, 2)}</td>
-                {isManager && <td className="py-2 text-right font-bold text-primary-600">{fmt(totalCommission, 2)}</td>}
+                {isManager && !deal.is_tbn_property && <td className="py-2 text-right font-bold text-primary-600">{fmt(totalCommission, 2)}</td>}
               </tr>
             </tbody>
           </table>
