@@ -510,7 +510,7 @@ export default function Products() {
         )}
       </Card>
 
-      <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.id ? 'Edit Product' : 'New Product'} size="lg">
+      <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.id ? 'Edit Product' : 'New Product'} size="xl">
         {modal !== null && (
           <ProductForm
             initial={modal?.id ? modal : null}
