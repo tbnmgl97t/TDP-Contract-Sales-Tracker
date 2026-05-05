@@ -234,14 +234,14 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             <Input
-              label={`${billingMode === 'fixed' ? 'Contract' : 'Monthly'} Qty (${product.unit_label || 'Units'})`}
+              label={`Qty (${product.unit_label || 'Units'})`}
               commas
               min="0"
               value={item.monthly_quantity || ''}
               onChange={(e) => onChange({ ...item, monthly_quantity: parseFloat(e.target.value) || 0 })}
             />
             <CurrencyInput
-              label={`COGS/Unit (per ${product.unit_label || 'unit'})`}
+              label={`COGS / ${product.unit_label || 'unit'}`}
               value={item.cogs_per_unit ?? ''}
               disabled={!isManager}
               onChange={(v) => {
@@ -255,7 +255,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               }}
             />
             <Input
-              label="Trilogy Margin %"
+              label="Margin %"
               type="number"
               min="0"
               max="99.9"
@@ -277,7 +277,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               }}
             />
             <CurrencyInput
-              label={`Rate (per ${product.unit_label || 'unit'})`}
+              label={`Rate / ${product.unit_label || 'unit'}`}
               hint="COGS ÷ (1 − margin%)"
               disabled={!isManager}
               value={item.unit_price != null && item.unit_price !== '' ? parseFloat(Number(item.unit_price).toFixed(4)) : ''}
@@ -289,7 +289,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               }}
             />
             <CurrencyInput
-              label={`Overage (per ${product.unit_label || 'unit'})`}
+              label={`Overage / ${product.unit_label || 'unit'}`}
               hint="Rate beyond contracted allocation"
               value={item.overage_rate != null && item.overage_rate !== '' ? parseFloat(Number(item.overage_rate).toFixed(4)) : ''}
               onChange={(v) => onChange({ ...item, overage_rate: v === '' ? null : v })}
