@@ -155,7 +155,7 @@ function ProductForm({ initial, vendors, categories, globalRate, onSave, onClose
               ))}
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-4 gap-3">
             <CurrencyInput
               label={`COGS/Unit (per ${form.unit_label || 'unit'})`}
               value={form._cogs_per_unit || ''}
@@ -201,14 +201,21 @@ function ProductForm({ initial, vendors, categories, globalRate, onSave, onClose
                 setForm({ ...form, _unit_price: v, _trilogy_margin_pct: pct })
               }}
             />
+            <CurrencyInput
+              label={`Overage (per ${form.unit_label || 'unit'})`}
+              hint="Per-unit price beyond contracted allocation"
+              value={form.default_overage_rate || ''}
+              onChange={(v) => setForm({ ...form, default_overage_rate: v === '' ? null : v })}
+            />
           </div>
           {(() => {
             const cogs = parseFloat(form._cogs_per_unit) || 0
             const rate = parseFloat(form._unit_price) || 0
+            const overage = parseFloat(form.default_overage_rate) || 0
             const marginPct = rate > 0 && cogs > 0 ? (rate - cogs) / rate : null
             if (!cogs && !rate) return null
             return (
-              <div className="bg-gray-50 rounded-lg p-3 grid grid-cols-3 gap-3 text-xs">
+              <div className={`bg-gray-50 rounded-lg p-3 grid gap-3 text-xs ${overage > 0 ? 'grid-cols-4' : 'grid-cols-3'}`}>
                 <div>
                   <p className="text-gray-500">COGS/Unit</p>
                   <p className="font-medium text-navy-900 mt-0.5">{cogs > 0 ? `$${cogs.toFixed(4)}` : '—'}</p>
@@ -223,6 +230,12 @@ function ProductForm({ initial, vendors, categories, globalRate, onSave, onClose
                     {marginPct != null ? `${(marginPct * 100).toFixed(1)}%` : '—'}
                   </p>
                 </div>
+                {overage > 0 && (
+                  <div>
+                    <p className="text-gray-500">Overage Rate</p>
+                    <p className="font-medium text-navy-900 mt-0.5">${overage.toFixed(4)}</p>
+                  </div>
+                )}
               </div>
             )
           })()}

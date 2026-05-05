@@ -718,7 +718,14 @@ export default function DealDetail() {
                 return (
                   <>
                     <tr key={dp.id} className={hasMilestones ? 'border-b-0' : ''}>
-                      <td className="py-3 font-medium text-navy-900">{dp.products?.name}</td>
+                      <td className="py-3 font-medium text-navy-900">
+                        {dp.products?.name}
+                        {dp.overage_rate && parseFloat(dp.overage_rate) > 0 && (
+                          <p className="text-xs text-gray-400 font-normal mt-0.5">
+                            Overage: ${parseFloat(dp.overage_rate).toFixed(4)}/{dp.products?.unit_label || 'unit'}
+                          </p>
+                        )}
+                      </td>
                       <td className="py-3 hidden sm:table-cell text-gray-500">{dp.commission_metric}</td>
                       <td className="py-3 text-right hidden md:table-cell text-gray-700">{fmt(dp.total_revenue || dp.annual_value || dp.yearly_cost, 2)}</td>
                       <td className="py-3 text-right hidden md:table-cell text-gray-500">{dp.cogs_amount ? fmt(dp.cogs_amount, 2) : '—'}</td>

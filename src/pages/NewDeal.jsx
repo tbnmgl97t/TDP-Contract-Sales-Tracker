@@ -177,6 +177,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               markup_pct: selectedProduct?.default_margin_type === 'percent' ? (selectedProduct?.default_margin_pct || '') : '',
               unit_price: defaults?.unit_price ?? '',
               cogs_per_unit: defaults?.cogs_per_unit ?? '',
+              overage_rate: selectedProduct?.default_overage_rate ?? '',
               cogs_amount: selectedProduct?.quantity_label ? '' : (selectedProduct?.default_cogs || ''),
               list_price: selectedProduct?.quantity_label ? '' : (selectedProduct?.default_list_price || ''),
               quantity: '',
@@ -231,7 +232,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               ))}
             </div>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             <Input
               label={`${billingMode === 'fixed' ? 'Contract' : 'Monthly'} Qty (${product.unit_label || 'Units'})`}
               commas
@@ -287,10 +288,19 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
                 onChange({ ...item, unit_price: v, _trilogy_margin_pct: pct })
               }}
             />
+            <CurrencyInput
+              label={`Overage (per ${product.unit_label || 'unit'})`}
+              hint="Rate beyond contracted allocation"
+              value={item.overage_rate != null && item.overage_rate !== '' ? parseFloat(Number(item.overage_rate).toFixed(4)) : ''}
+              onChange={(v) => onChange({ ...item, overage_rate: v === '' ? null : v })}
+            />
           </div>
           {(() => {
             const marginPct = item.total_revenue > 0 ? item.net_revenue / item.total_revenue : null
-            const cols = isManager && !isTbn ? 'grid-cols-5' : 'grid-cols-4'
+            const hasOverage = item.overage_rate != null && item.overage_rate !== '' && parseFloat(item.overage_rate) > 0
+            const cols = hasOverage
+              ? (isManager && !isTbn ? 'grid-cols-6' : 'grid-cols-5')
+              : (isManager && !isTbn ? 'grid-cols-5' : 'grid-cols-4')
             return (
               <div className={`bg-gray-50 rounded-lg p-3 grid gap-3 text-xs ${cols}`}>
                 <div>
@@ -316,6 +326,12 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
                   <div>
                     <p className="text-gray-500">Commission</p>
                     <p className="font-bold text-primary-600 mt-0.5">{fmt(item.commission_amount, 2)}</p>
+                  </div>
+                )}
+                {hasOverage && (
+                  <div>
+                    <p className="text-gray-500">Overage Rate</p>
+                    <p className="font-medium text-navy-900 mt-0.5">${parseFloat(item.overage_rate).toFixed(4)}/{product.unit_label || 'unit'}</p>
                   </div>
                 )}
               </div>
