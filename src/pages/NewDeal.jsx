@@ -180,6 +180,9 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               overage_rate: selectedProduct?.default_overage_rate ?? '',
               cogs_amount: selectedProduct?.quantity_label ? '' : (selectedProduct?.default_cogs || ''),
               list_price: selectedProduct?.quantity_label ? '' : (selectedProduct?.default_list_price || ''),
+              monthly_value: (!selectedProduct?.is_usage_based && selectedProduct?.commission_metric !== 'GM' && !selectedProduct?.is_support_charge && selectedProduct?.default_list_price)
+                ? parseFloat(selectedProduct.default_list_price)
+                : '',
               quantity: '',
               discount_pct: '',
               yearly_cost: (!selectedProduct?.quantity_label && selectedProduct?.default_list_price)
@@ -193,7 +196,11 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               support_pct: selectedProduct?.is_support_charge ? (selectedProduct?.default_support_pct ?? 15) : '',
               support_cogs_pct: selectedProduct?.is_support_charge ? (selectedProduct?.default_support_cogs_pct ?? '') : '',
               support_product_ids: selectedProduct?.is_support_charge ? (item.support_product_ids || []) : [],
-              _trilogy_margin_pct: '',
+              _trilogy_margin_pct: (() => {
+                const u = parseFloat(defaults?.unit_price) || 0
+                const c = parseFloat(defaults?.cogs_per_unit) || 0
+                return u > 0 && c > 0 && u >= c ? parseFloat(((1 - c / u) * 100).toFixed(2)) : ''
+              })(),
             })
           }}
           label="Product"
