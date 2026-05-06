@@ -46,8 +46,12 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
     if (!product || isSupportCharge) return
     const effectiveRate = product.rate_overridden ? product.base_rate : globalRate
     if (isUsageBased) {
-      const unitPrice = parseFloat(item.unit_price) || 0
       const cogsPerUnit = parseFloat(item.cogs_per_unit) || 0
+      const margin = parseFloat(item._trilogy_margin_pct)
+      // Derive rate from COGS + margin for full precision; fall back to stored unit_price
+      const unitPrice = (cogsPerUnit > 0 && !isNaN(margin) && margin < 100)
+        ? cogsPerUnit / (1 - margin / 100)
+        : (parseFloat(item.unit_price) || 0)
       const { monthlyCost, totalRevenue, totalCogs, netRevenue } = calcJwxValues(
         item.monthly_quantity,
         unitPrice,
@@ -113,7 +117,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
         onChange({ ...item, annual_value: annual, commission_amount: commission, commission_metric: product.commission_metric, base_rate: effectiveRate })
       }
     }
-  }, [item.product_id, item.monthly_quantity, item.unit_price, item.cogs_per_unit, item.monthly_value, item.yearly_cost, item.cogs_amount, item.discount_pct, item.quantity, item._milestone_total, item.billing_months, item.billing_mode, contractMonths, globalRate])
+  }, [item.product_id, item.monthly_quantity, item.unit_price, item.cogs_per_unit, item._trilogy_margin_pct, item.monthly_value, item.yearly_cost, item.cogs_amount, item.discount_pct, item.quantity, item._milestone_total, item.billing_months, item.billing_mode, contractMonths, globalRate])
 
   // Support charge: Revenue = support% × sum(linked revenues), COGS = support% × sum(linked COGS)
   useEffect(() => {
