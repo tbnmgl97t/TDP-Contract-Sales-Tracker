@@ -579,62 +579,91 @@ export default function DealDetail() {
         )
       })()}
 
-      {/* Partner commissions */}
-      {partnerStack.length > 0 && (
-        <Card>
-          <CardHeader title="Partner Commissions" subtitle={`Customer ACV: ${fmt(customerAcv, 2)}`} />
-          <div className="space-y-0">
-            {/* Pricing breakdown */}
-            <div className="bg-gray-50 rounded-xl p-4 mb-4 space-y-1.5 text-sm">
-              {totalCogs > 0 ? (
-                <>
+      {/* Pricing Stack */}
+      {(() => {
+        const trilogyACV = productACV > 0 ? productACV : (deal.acv || 0)
+        const trilogyMargin = trilogyACV - totalCogs
+        const trilogyNet = trilogyACV - totalCogs - totalCommission
+        return (
+          <Card>
+            <CardHeader title="Pricing Stack" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+              {/* Stack 1: Build up to Customer ACV */}
+              <div className="bg-gray-50 rounded-xl p-4 space-y-1.5 text-sm">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Customer Price</p>
+                {totalCogs > 0 && (
                   <div className="flex justify-between">
                     <span className="text-gray-500">Vendor Cost (COGS)</span>
                     <span className="font-medium text-navy-900">{fmt(totalCogs, 2)}</span>
                   </div>
-                  <div className="flex justify-between text-teal-700">
-                    <span>+ Trilogy Margin</span>
-                    <span className="font-medium">+{fmt((productACV > 0 ? productACV : (deal.acv || 0)) - totalCogs, 2)}</span>
+                )}
+                <div className="flex justify-between text-teal-700">
+                  <span>+ Trilogy Margin</span>
+                  <span className="font-medium">+{fmt(trilogyMargin, 2)}</span>
+                </div>
+                <div className="flex justify-between pt-1.5 border-t border-gray-200">
+                  <span className="text-gray-600 font-medium">Trilogy ACV</span>
+                  <span className="font-medium text-navy-900">{fmt(trilogyACV, 2)}</span>
+                </div>
+                {partnerStack.map((dp) => (
+                  <div key={dp.id} className="flex justify-between text-purple-700">
+                    <span>+ {dp.partners?.name} ({dp.commission_pct}%)</span>
+                    <span className="font-medium">+{fmt(dp.commission_amount, 2)}</span>
                   </div>
-                  <div className="flex justify-between pt-1.5 border-t border-gray-200">
-                    <span className="text-gray-600 font-medium">Trilogy ACV</span>
-                    <span className="font-medium text-navy-900">{fmt(productACV > 0 ? productACV : deal.acv, 2)}</span>
-                  </div>
-                </>
-              ) : (
+                ))}
+                <div className="flex justify-between pt-1.5 border-t border-gray-200 font-semibold">
+                  <span className="text-navy-900">Customer ACV</span>
+                  <span className="text-navy-900">{fmt(customerAcv, 2)}</span>
+                </div>
+              </div>
+
+              {/* Stack 2: Trilogy Net */}
+              <div className="bg-gray-50 rounded-xl p-4 space-y-1.5 text-sm">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Trilogy Net</p>
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Trilogy ACV (base)</span>
-                  <span className="font-medium text-navy-900">{fmt(productACV > 0 ? productACV : deal.acv, 2)}</span>
+                  <span className="text-gray-600 font-medium">Trilogy ACV</span>
+                  <span className="font-medium text-navy-900">{fmt(trilogyACV, 2)}</span>
                 </div>
-              )}
-              {partnerStack.map((dp) => (
-                <div key={dp.id} className="flex justify-between text-purple-700">
-                  <span>+ {dp.partners?.name} ({dp.commission_pct}%)</span>
-                  <span className="font-medium">+{fmt(dp.commission_amount, 2)}</span>
+                {totalCogs > 0 && (
+                  <div className="flex justify-between text-red-600">
+                    <span>− Vendor Cost (COGS)</span>
+                    <span className="font-medium">−{fmt(totalCogs, 2)}</span>
+                  </div>
+                )}
+                {!deal.is_tbn_property && totalCommission > 0 && (
+                  <div className="flex justify-between text-red-600">
+                    <span>− Internal Commissions</span>
+                    <span className="font-medium">−{fmt(totalCommission, 2)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between pt-1.5 border-t border-gray-200 font-semibold">
+                  <span className="text-navy-900">Trilogy Net</span>
+                  <span className="text-green-600">{fmt(trilogyNet, 2)}</span>
                 </div>
-              ))}
-              <div className="flex justify-between pt-1.5 border-t border-gray-200 font-semibold">
-                <span className="text-navy-900">Customer ACV</span>
-                <span className="text-navy-900">{fmt(customerAcv, 2)}</span>
               </div>
             </div>
 
             {/* Partner detail rows */}
-            {partnerStack.map((dp, i) => (
-              <div key={dp.id} className="flex items-center justify-between text-sm py-2.5 border-t border-gray-50 first:border-t-0">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center text-purple-700 font-bold text-xs">{i + 1}</div>
-                  <div>
-                    <p className="font-medium text-navy-900">{dp.partners?.name}</p>
-                    <p className="text-xs text-gray-400">{dp.commission_pct}% referral commission</p>
+            {partnerStack.length > 0 && (
+              <div className="mt-4 space-y-0">
+                {partnerStack.map((dp, i) => (
+                  <div key={dp.id} className="flex items-center justify-between text-sm py-2.5 border-t border-gray-100 first:border-t-0">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center text-purple-700 font-bold text-xs">{i + 1}</div>
+                      <div>
+                        <p className="font-medium text-navy-900">{dp.partners?.name}</p>
+                        <p className="text-xs text-gray-400">{dp.commission_pct}% referral commission</p>
+                      </div>
+                    </div>
+                    <span className="font-semibold text-purple-700">{fmt(dp.commission_amount, 2)}</span>
                   </div>
-                </div>
-                <span className="font-semibold text-purple-700">{fmt(dp.commission_amount, 2)}</span>
+                ))}
               </div>
-            ))}
-          </div>
-        </Card>
-      )}
+            )}
+          </Card>
+        )
+      })()}
 
       {/* Deal details */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
