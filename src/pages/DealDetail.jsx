@@ -507,14 +507,17 @@ export default function DealDetail() {
         <Card className="!py-3">
           <p className="text-xs text-gray-500">ACV</p>
           <p className="text-lg font-bold text-navy-900 mt-0.5">
-            {dealProducts.length > 0 ? fmt(productACV, 2) : fmt(deal.acv, 2)}
+            {dealProducts.length > 0 ? fmt(customerAcv, 2) : fmt(deal.acv, 2)}
           </p>
-          {dealProducts.length > 0 && deal.acv > 0 && (
+          {dealProducts.length > 0 && dealPartners.length > 0 && (
+            <p className="text-xs text-gray-400 mt-0.5">Trilogy net: {fmt(productACV, 2)}</p>
+          )}
+          {dealProducts.length > 0 && dealPartners.length === 0 && deal.acv > 0 && (
             <p className="text-xs text-gray-400 mt-0.5">Est. {fmt(deal.acv, 2)}</p>
           )}
         </Card>
         {[
-          { label: 'Total Value', value: fmt(dealProducts.length > 0 ? productACV * (deal.contract_months || 12) / 12 : (deal.total_contract_value || deal.acv), 2), show: true },
+          { label: 'Total Value', value: fmt(dealProducts.length > 0 ? customerAcv * (deal.contract_months || 12) / 12 : (deal.total_contract_value || deal.acv), 2), show: true },
           { label: 'Contract Months', value: deal.contract_months || 12, show: true },
           { label: 'Commission', value: fmt(totalCommission, 2), show: isManager },
         ].filter((s) => s.show).map((stat) => (
