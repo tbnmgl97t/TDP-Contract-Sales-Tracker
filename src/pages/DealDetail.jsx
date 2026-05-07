@@ -12,6 +12,7 @@ import { buildCommissionSchedule, fmt, getMarginTier } from '../lib/commission'
 import { PageSpinner } from '../components/ui/Spinner'
 import { useUser } from '../contexts/UserContext'
 import DealOverviewModal from '../components/DealOverviewModal'
+import ProposalModal from '../components/ProposalModal'
 import { format } from 'date-fns'
 import ReactMarkdown from 'react-markdown'
 
@@ -111,6 +112,7 @@ export default function DealDetail() {
   const [deleteContractDlg, setDeleteContractDlg] = useState(null)
   const [auditLog, setAuditLog] = useState([])
   const [showOverview, setShowOverview] = useState(false)
+  const [showProposal, setShowProposal] = useState(false)
   const [approval, setApproval] = useState(null)
   const [approving, setApproving] = useState(false)
   const chatEndRef = useRef(null)
@@ -477,6 +479,7 @@ export default function DealDetail() {
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" size="sm" onClick={() => setShowOverview(true)} icon={<LayoutTemplate size={14} />}>Overview</Button>
+          <Button variant="secondary" size="sm" onClick={() => setShowProposal(true)} icon={<FileText size={14} />}>Proposal</Button>
           <Button variant="secondary" size="sm" onClick={() => navigate(`/deals/${id}/edit`)} icon={<Edit size={14} />}>Edit</Button>
           <Button variant="danger" size="sm" onClick={() => setDeleteDlg(true)} icon={<Trash2 size={14} />}>Delete</Button>
         </div>
@@ -1029,6 +1032,14 @@ export default function DealDetail() {
           approval={approval}
           onClose={() => setShowOverview(false)}
           isManager={isManager}
+        />
+      )}
+      {showProposal && (
+        <ProposalModal
+          deal={deal}
+          dealProducts={dealProducts}
+          dealTeam={dealTeam}
+          onClose={() => setShowProposal(false)}
         />
       )}
       <ConfirmDialog
