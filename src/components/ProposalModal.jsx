@@ -44,7 +44,7 @@ function buildRows(dealProducts, partnerMultiplier = 1) {
     } else if (isGM) {
       const qty = dp.monthly_quantity || dp.quantity || ''
       const effectiveRate = dp.unit_price_snapshot ? parseFloat(dp.unit_price_snapshot) * m : null
-      const overageRate = dp.overage_rate ? parseFloat(dp.overage_rate) * m : null
+      const overageRate = dp.overage_rate ? parseFloat(dp.overage_rate) : null
       const lineTotal = (dp.total_revenue || dp.yearly_cost || 0) * m
       rows.push({
         product: prod.name,

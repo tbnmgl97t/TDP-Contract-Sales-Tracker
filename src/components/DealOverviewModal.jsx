@@ -218,6 +218,12 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
               if (isNaN(n) || n === 0) return '—'
               return `$${(n * m).toFixed(dec)}`
             }
+            const fmtRaw = (val, dec = 4) => {
+              if (val == null || val === '') return '—'
+              const n = parseFloat(val)
+              if (isNaN(n) || n === 0) return '—'
+              return `$${n.toFixed(dec)}`
+            }
             const fmtQty = (val) => {
               if (val == null || val === '') return '—'
               const n = parseFloat(val)
@@ -249,7 +255,7 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
                         <td className="px-4 py-2.5 text-gray-400 italic text-xs">{isGM && !isSupport ? prod.unit_label : ''}</td>
                         <td className="px-4 py-2.5 text-right text-gray-700">{isGM && !isSupport ? fmtQty(dp.monthly_quantity || dp.quantity) : '—'}</td>
                         <td className="px-4 py-2.5 text-right text-gray-700">{isGM && !isSupport ? fmtRate(dp.unit_price_snapshot) : '—'}</td>
-                        <td className="px-4 py-2.5 text-right text-gray-700">{isGM && !isSupport && dp.overage_rate && parseFloat(dp.overage_rate) > 0 ? fmtRate(dp.overage_rate) : '—'}</td>
+                        <td className="px-4 py-2.5 text-right text-gray-700">{isGM && !isSupport && dp.overage_rate && parseFloat(dp.overage_rate) > 0 ? fmtRaw(dp.overage_rate) : '—'}</td>
                         <td className="px-4 py-2.5 text-right font-semibold text-purple-700">{fmt(lineTotal, 2)}</td>
                       </tr>
                     )

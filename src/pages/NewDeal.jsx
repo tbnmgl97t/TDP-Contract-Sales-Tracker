@@ -11,7 +11,7 @@ import { DEAL_STAGES, DEAL_TYPES } from '../lib/constants'
 import { calcJwxValues, calcProductCommission, calcSpif, fmt, getMarginTier } from '../lib/commission'
 import { PageSpinner } from '../components/ui/Spinner'
 
-function ProductRow({ item, allItems, products, vendors, pricingMap, contractMonths, contractEnd, globalRate, onChange, onRemove, onMoveUp, onMoveDown, isFirst, isLast, isManager, isTbn }) {
+function ProductRow({ item, allItems, products, vendors, pricingMap, contractMonths, contractEnd, globalRate, onChange, onRemove, onMoveUp, onMoveDown, isFirst, isLast, isManager, isTbn, partnerMultiplier = 1 }) {
   const product = products.find((p) => p.id === item.product_id)
   const isUsageBased = product?.is_usage_based
   const isGM = product?.commission_metric === 'GM'
@@ -301,12 +301,26 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
                 onChange({ ...item, unit_price: v, _trilogy_margin_pct: pct })
               }}
             />
-            <CurrencyInput
-              label={`Overage / ${product.unit_label || 'unit'}`}
-              hint="Rate beyond contracted allocation"
-              value={item.overage_rate != null && item.overage_rate !== '' ? parseFloat(Number(item.overage_rate).toFixed(4)) : ''}
-              onChange={(v) => onChange({ ...item, overage_rate: v === '' ? null : v })}
-            />
+            {(() => {
+              const overageVal = item.overage_rate != null && item.overage_rate !== '' ? parseFloat(item.overage_rate) : null
+              const effectiveToCustomer = item.unit_price != null ? (parseFloat(item.unit_price) || 0) * partnerMultiplier : 0
+              const overageBelowEffective = overageVal != null && effectiveToCustomer > 0 && overageVal < effectiveToCustomer
+              return (
+                <>
+                  <CurrencyInput
+                    label={`Overage / ${product.unit_label || 'unit'}`}
+                    hint="Rate beyond contracted allocation"
+                    value={overageVal != null ? parseFloat(Number(overageVal).toFixed(4)) : ''}
+                    onChange={(v) => onChange({ ...item, overage_rate: v === '' ? null : v })}
+                  />
+                  {overageBelowEffective && (
+                    <p className="text-xs text-red-500 col-span-full -mt-2">
+                      Overage rate (${overageVal.toFixed(4)}) is below the customer effective rate (${effectiveToCustomer.toFixed(4)}). Please increase it.
+                    </p>
+                  )}
+                </>
+              )
+            })()}
           </div>
           {(() => {
             const marginPct = item.total_revenue > 0 ? item.net_revenue / item.total_revenue : null
@@ -1265,6 +1279,7 @@ export default function NewDeal() {
               isLast={i === dealProducts.length - 1}
               isManager={isManager}
               isTbn={form.is_tbn_property}
+              partnerMultiplier={productBaseAcv > 0 ? customerAcv / productBaseAcv : 1}
             />
           ))}
           <Button size="sm" variant="secondary" onClick={addProduct} icon={<Plus size={14} />}>Add Product</Button>
