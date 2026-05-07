@@ -206,6 +206,65 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
         )
       })()}
 
+      {/* Customer Pricing Table */}
+      <section>
+        <h4 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Customer Pricing</h4>
+        <div className="rounded-xl border border-gray-100 overflow-x-auto">
+          {(() => {
+            const m = baseAcv > 0 ? customerAcv / baseAcv : 1
+            const fmtRate = (val, dec = 4) => {
+              if (val == null || val === '') return '—'
+              const n = parseFloat(val)
+              if (isNaN(n) || n === 0) return '—'
+              return `$${(n * m).toFixed(dec)}`
+            }
+            const fmtQty = (val) => {
+              if (val == null || val === '') return '—'
+              const n = parseFloat(val)
+              if (isNaN(n) || n === 0) return '—'
+              return n.toLocaleString()
+            }
+            return (
+              <table className="w-full min-w-[560px] text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-100">
+                    <th className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs">Product</th>
+                    <th className="text-left px-4 py-2.5 font-medium text-gray-400 text-xs italic">Unit</th>
+                    <th className="text-right px-4 py-2.5 font-medium text-gray-500 text-xs">Monthly</th>
+                    <th className="text-right px-4 py-2.5 font-medium text-gray-500 text-xs">Effective Rate</th>
+                    <th className="text-right px-4 py-2.5 font-medium text-gray-500 text-xs">Overage</th>
+                    <th className="text-right px-4 py-2.5 font-medium text-gray-500 text-xs">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {dealProducts.map((dp) => {
+                    const prod = dp.products
+                    if (!prod) return null
+                    const isGM = dp.commission_metric === 'GM'
+                    const isSupport = !!prod.is_support_charge
+                    const lineTotal = (dp.total_revenue || dp.annual_value || dp.yearly_cost || 0) * m
+                    return (
+                      <tr key={dp.id}>
+                        <td className="px-4 py-2.5 font-medium text-gray-900">{prod.name}</td>
+                        <td className="px-4 py-2.5 text-gray-400 italic text-xs">{isGM && !isSupport ? prod.unit_label : ''}</td>
+                        <td className="px-4 py-2.5 text-right text-gray-700">{isGM && !isSupport ? fmtQty(dp.monthly_quantity || dp.quantity) : '—'}</td>
+                        <td className="px-4 py-2.5 text-right text-gray-700">{isGM && !isSupport ? fmtRate(dp.unit_price_snapshot) : '—'}</td>
+                        <td className="px-4 py-2.5 text-right text-gray-700">{isGM && !isSupport && dp.overage_rate && parseFloat(dp.overage_rate) > 0 ? fmtRate(dp.overage_rate) : '—'}</td>
+                        <td className="px-4 py-2.5 text-right font-semibold text-purple-700">{fmt(lineTotal, 2)}</td>
+                      </tr>
+                    )
+                  })}
+                  <tr className="border-t-2 border-gray-200 bg-gray-50">
+                    <td colSpan={5} className="px-4 py-2.5 font-semibold text-gray-900 text-sm">Annual Investment</td>
+                    <td className="px-4 py-2.5 text-right font-bold text-purple-700">{fmt(customerAcv, 2)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            )
+          })()}
+        </div>
+      </section>
+
       {/* Products */}
       <section>
         <h4 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Products & Services</h4>
