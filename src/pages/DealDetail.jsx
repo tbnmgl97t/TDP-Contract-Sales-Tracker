@@ -1039,6 +1039,7 @@ export default function DealDetail() {
           deal={deal}
           dealProducts={dealProducts}
           dealTeam={dealTeam}
+          dealPartners={dealPartners}
           onClose={() => setShowProposal(false)}
         />
       )}

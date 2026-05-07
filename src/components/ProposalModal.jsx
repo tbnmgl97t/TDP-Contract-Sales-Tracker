@@ -19,8 +19,9 @@ function fmtQty(val) {
   return n.toLocaleString()
 }
 
-// Build proposal rows from deal_products
-function buildRows(dealProducts) {
+// Build proposal rows from deal_products, marking up by partner commission
+// partnerMultiplier = 1 / (1 - totalPartnerPct)  e.g. 1/0.925 for 7.5%
+function buildRows(dealProducts, partnerMultiplier = 1) {
   const rows = []
   for (const dp of dealProducts) {
     const prod = dp.products
@@ -28,6 +29,7 @@ function buildRows(dealProducts) {
 
     const isGM = dp.commission_metric === 'GM'
     const isSupport = !!prod.is_support_charge
+    const m = partnerMultiplier
 
     if (isSupport) {
       rows.push({
@@ -36,19 +38,21 @@ function buildRows(dealProducts) {
         monthly: '',
         effective: '',
         overage: '',
-        total: dp.annual_value || 0,
+        total: (dp.annual_value || 0) * m,
         isSupport: true,
       })
     } else if (isGM) {
-      // Usage-based: quantity-based GM products use dp.quantity, hourly/volume use dp.monthly_quantity
       const qty = dp.monthly_quantity || dp.quantity || ''
+      const effectiveRate = dp.unit_price_snapshot ? parseFloat(dp.unit_price_snapshot) * m : null
+      const overageRate = dp.overage_rate ? parseFloat(dp.overage_rate) * m : null
+      const lineTotal = (dp.total_revenue || dp.yearly_cost || 0) * m
       rows.push({
         product: prod.name,
         unit: prod.unit_label || '',
         monthly: qty,
-        effective: dp.unit_price_snapshot,
-        overage: dp.overage_rate,
-        total: dp.total_revenue || dp.yearly_cost || 0,
+        effective: effectiveRate,
+        overage: overageRate,
+        total: lineTotal,
         isSupport: false,
       })
     } else {
@@ -59,7 +63,7 @@ function buildRows(dealProducts) {
         monthly: '',
         effective: '',
         overage: '',
-        total: dp.annual_value || dp.yearly_cost || 0,
+        total: (dp.annual_value || dp.yearly_cost || 0) * m,
         isSupport: false,
       })
     }
@@ -311,11 +315,15 @@ function SlideThankYou() {
 
 // ─── Main modal ──────────────────────────────────────────────────────────────
 
-export default function ProposalModal({ deal, dealProducts, dealTeam, onClose }) {
+export default function ProposalModal({ deal, dealProducts, dealTeam, dealPartners = [], onClose }) {
   const printRef = useRef(null)
 
-  const products = dealProducts.map((dp) => dp.products).filter(Boolean)
-  const rows = buildRows(dealProducts, products)
+  // Sum all partner commission percentages → compute markup multiplier
+  // e.g. 7.5% partner → multiplier = 1 / (1 - 0.075) ≈ 1.08108
+  const totalPartnerPct = (dealPartners || []).reduce((s, p) => s + (parseFloat(p.commission_pct) || 0), 0)
+  const partnerMultiplier = totalPartnerPct > 0 ? 1 / (1 - totalPartnerPct / 100) : 1
+
+  const rows = buildRows(dealProducts, partnerMultiplier)
   const totalRevenue = rows.reduce((s, r) => s + (r.total || 0), 0)
 
   const salesRep = dealTeam?.find((m) => m.role === 'sales')
