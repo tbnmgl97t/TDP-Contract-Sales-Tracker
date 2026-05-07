@@ -290,7 +290,7 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
                       <span>+ {dp.partners?.name} ({dp.commission_pct}%)</span>
                       <span className="font-medium">+{fmt(dp.commission_amount, 2)}</span>
                     </div>
-                    <p className="text-xs text-purple-400 pl-3">{dp.commission_pct}% referral commission</p>
+                    <p className="text-xs text-purple-400 pl-3">Referral commission</p>
                   </div>
                 ))}
                 <div className="flex justify-between pt-1.5 border-t border-gray-200 font-semibold">
