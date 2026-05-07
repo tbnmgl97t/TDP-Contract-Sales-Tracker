@@ -664,6 +664,7 @@ export default function DealDetail() {
               <tr className="border-b border-gray-100">
                 <th className="text-left py-2 font-medium text-gray-500 text-xs uppercase tracking-wide">Product</th>
                 <th className="text-left py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden sm:table-cell">Metric</th>
+                {dealPartners.length > 0 && <th className="text-right py-2 font-medium text-purple-500 text-xs uppercase tracking-wide hidden md:table-cell">Customer Cost</th>}
                 <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">Trilogy Revenue</th>
                 <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">COGS</th>
                 {isManager && !deal.is_tbn_property && <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide">Commission</th>}
@@ -685,6 +686,11 @@ export default function DealDetail() {
                         )}
                       </td>
                       <td className="py-3 hidden sm:table-cell text-gray-500">{dp.commission_metric}</td>
+                      {dealPartners.length > 0 && (
+                        <td className="py-3 text-right hidden md:table-cell font-semibold text-purple-700">
+                          {fmt((dp.total_revenue || dp.annual_value || dp.yearly_cost || 0) * (productACV > 0 ? customerAcv / productACV : 1), 2)}
+                        </td>
+                      )}
                       <td className="py-3 text-right hidden md:table-cell text-gray-700">{fmt(dp.total_revenue || dp.annual_value || dp.yearly_cost, 2)}</td>
                       <td className="py-3 text-right hidden md:table-cell text-gray-500">{effectiveCogs(dp) > 0 ? fmt(effectiveCogs(dp), 2) : '—'}</td>
                       {isManager && !deal.is_tbn_property && <td className="py-3 text-right font-semibold text-primary-600">{fmt(dp.commission_amount, 2)}</td>}
@@ -714,12 +720,8 @@ export default function DealDetail() {
               })}
               <tr className="border-t-2 border-gray-200">
                 <td colSpan={2} className="py-2 font-semibold text-navy-900 text-sm">Total</td>
-                <td className="py-2 text-right hidden md:table-cell">
-                  <span className="font-bold text-navy-900">{fmt(totalRevenue, 2)}</span>
-                  {dealPartners.length > 0 && (
-                    <p className="text-xs text-purple-600 font-medium mt-0.5">Customer: {fmt(customerAcv, 2)}</p>
-                  )}
-                </td>
+                {dealPartners.length > 0 && <td className="py-2 text-right font-bold text-purple-700 hidden md:table-cell">{fmt(customerAcv, 2)}</td>}
+                <td className="py-2 text-right font-bold text-navy-900 hidden md:table-cell">{fmt(totalRevenue, 2)}</td>
                 <td className="py-2 text-right font-bold text-navy-900 hidden md:table-cell">{fmt(totalCogs, 2)}</td>
                 {isManager && !deal.is_tbn_property && <td className="py-2 text-right font-bold text-primary-600">{fmt(totalCommission, 2)}</td>}
               </tr>

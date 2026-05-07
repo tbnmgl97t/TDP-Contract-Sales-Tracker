@@ -210,13 +210,14 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
       <section>
         <h4 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Products & Services</h4>
         <div className="rounded-xl border border-gray-100 overflow-x-auto">
-          <table className="w-full min-w-[480px] text-sm">
+          <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-100">
                 <th className="text-left px-4 py-2.5 font-medium text-gray-500 text-xs">Product</th>
+                {partnerStack.length > 0 && <th className="text-right px-4 py-2.5 font-medium text-purple-500 text-xs">Customer Cost</th>}
                 <th className="text-right px-4 py-2.5 font-medium text-gray-500 text-xs">Trilogy Revenue</th>
-                {totalCogs > 0 && <th className="text-right px-4 py-2.5 font-medium text-gray-500 text-xs">COGS</th>}
                 {totalCogs > 0 && isManager && <th className="text-right px-4 py-2.5 font-medium text-gray-500 text-xs">Trilogy Margin</th>}
+                {totalCogs > 0 && <th className="text-right px-4 py-2.5 font-medium text-gray-500 text-xs">COGS</th>}
                 {isManager && <th className="text-right px-4 py-2.5 font-medium text-gray-500 text-xs">Commission</th>}
               </tr>
             </thead>
@@ -225,32 +226,31 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
                 const revenue = dp.total_revenue || dp.annual_value || dp.yearly_cost || 0
                 const dpCogs = effectiveCogs(dp)
                 const margin = totalCogs > 0 ? revenue - dpCogs : null
+                const partnerMultiplier = baseAcv > 0 ? customerAcv / baseAcv : 1
+                const customerCost = revenue * partnerMultiplier
                 return (
                   <tr key={dp.id}>
                     <td className="px-4 py-2.5 font-medium text-gray-900">{dp.products?.name}</td>
+                    {partnerStack.length > 0 && <td className="px-4 py-2.5 text-right font-semibold text-purple-700">{fmt(customerCost, 2)}</td>}
                     <td className="px-4 py-2.5 text-right text-gray-700">{fmt(revenue, 2)}</td>
-                    {totalCogs > 0 && <td className="px-4 py-2.5 text-right text-gray-500">{dpCogs > 0 ? fmt(dpCogs, 2) : '—'}</td>}
                     {totalCogs > 0 && isManager && <td className="px-4 py-2.5 text-right text-teal-700">{margin != null ? fmt(margin, 2) : '—'}</td>}
+                    {totalCogs > 0 && <td className="px-4 py-2.5 text-right text-gray-500">{dpCogs > 0 ? fmt(dpCogs, 2) : '—'}</td>}
                     {isManager && <td className="px-4 py-2.5 text-right font-semibold text-indigo-700">{fmt(dp.commission_amount, 2)}</td>}
                   </tr>
                 )
               })}
               <tr className="border-t-2 border-gray-200 bg-gray-50">
                 <td className="px-4 py-2.5 font-semibold text-gray-900 text-sm">Total</td>
-                <td className="px-4 py-2.5 text-right">
-                  <span className="font-bold text-gray-900">
-                    {fmt(dealProducts.reduce((s, p) => s + (p.total_revenue || p.annual_value || p.yearly_cost || 0), 0), 2)}
-                  </span>
-                  {partnerStack.length > 0 && (
-                    <p className="text-xs text-purple-600 font-medium mt-0.5">Customer: {fmt(customerAcv, 2)}</p>
-                  )}
+                {partnerStack.length > 0 && <td className="px-4 py-2.5 text-right font-bold text-purple-700">{fmt(customerAcv, 2)}</td>}
+                <td className="px-4 py-2.5 text-right font-bold text-gray-900">
+                  {fmt(dealProducts.reduce((s, p) => s + (p.total_revenue || p.annual_value || p.yearly_cost || 0), 0), 2)}
                 </td>
-                {totalCogs > 0 && <td className="px-4 py-2.5 text-right font-bold text-gray-700">{fmt(totalCogs, 2)}</td>}
                 {totalCogs > 0 && isManager && (
                   <td className="px-4 py-2.5 text-right font-bold text-teal-700">
-                    {fmt(dealProducts.reduce((s, p) => s + (p.total_revenue || p.annual_value || p.yearly_cost || 0) - (p.cogs_amount || 0), 0), 2)}
+                    {fmt(dealProducts.reduce((s, p) => s + (p.total_revenue || p.annual_value || p.yearly_cost || 0) - effectiveCogs(p), 0), 2)}
                   </td>
                 )}
+                {totalCogs > 0 && <td className="px-4 py-2.5 text-right font-bold text-gray-700">{fmt(totalCogs, 2)}</td>}
                 {isManager && <td className="px-4 py-2.5 text-right font-bold text-indigo-700">{fmt(totalCommission, 2)}</td>}
               </tr>
             </tbody>
