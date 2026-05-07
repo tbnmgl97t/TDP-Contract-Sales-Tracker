@@ -7,8 +7,17 @@ import { StageBadge } from './ui/Badge'
 export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPartners, onClose, isManager }) {
   const printRef = useRef(null)
 
+  // Derive COGS for support charges that may not have cogs_amount saved
+  function effectiveCogs(dp) {
+    if (dp.cogs_amount) return dp.cogs_amount
+    if (dp.products?.is_support_charge && dp.support_cogs_pct != null) {
+      return (dp.annual_value || 0) * dp.support_cogs_pct / 100
+    }
+    return 0
+  }
+
   // Totals
-  const totalCogs = dealProducts.reduce((s, p) => s + (p.cogs_amount || 0), 0)
+  const totalCogs = dealProducts.reduce((s, p) => s + effectiveCogs(p), 0)
   const totalCommission = dealProducts.reduce((s, p) => s + (p.commission_amount || 0), 0)
 
   // ACV
@@ -108,6 +117,7 @@ export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPa
               supportTeam={supportTeam}
               quarterGroups={quarterGroups}
               isManager={isManager}
+              effectiveCogs={effectiveCogs}
             />
           </div>
         </div>
@@ -138,6 +148,7 @@ export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPa
           supportTeam={supportTeam}
           quarterGroups={quarterGroups}
           isManager={isManager}
+          effectiveCogs={effectiveCogs}
           printMode
         />
       </div>
@@ -145,7 +156,7 @@ export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPa
   )
 }
 
-function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseAcv, partnerStack, customerAcv, salesTeam, supportTeam, quarterGroups, isManager, printMode }) {
+function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseAcv, partnerStack, customerAcv, salesTeam, supportTeam, quarterGroups, isManager, printMode, effectiveCogs }) {
   const row = (label, value, accent) => (
     <div className={`flex justify-between text-sm py-1 ${accent ? 'font-semibold' : ''}`}>
       <span className={accent ? 'text-gray-900' : 'text-gray-500'}>{label}</span>
@@ -185,12 +196,13 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
             <tbody className="divide-y divide-gray-50">
               {dealProducts.map((dp) => {
                 const revenue = dp.total_revenue || dp.annual_value || dp.yearly_cost || 0
-                const margin = totalCogs > 0 ? revenue - (dp.cogs_amount || 0) : null
+                const dpCogs = effectiveCogs(dp)
+                const margin = totalCogs > 0 ? revenue - dpCogs : null
                 return (
                   <tr key={dp.id}>
                     <td className="px-4 py-2.5 font-medium text-gray-900">{dp.products?.name}</td>
                     <td className="px-4 py-2.5 text-right text-gray-700">{fmt(revenue, 2)}</td>
-                    {totalCogs > 0 && <td className="px-4 py-2.5 text-right text-gray-500">{dp.cogs_amount ? fmt(dp.cogs_amount, 2) : '—'}</td>}
+                    {totalCogs > 0 && <td className="px-4 py-2.5 text-right text-gray-500">{dpCogs > 0 ? fmt(dpCogs, 2) : '—'}</td>}
                     {totalCogs > 0 && isManager && <td className="px-4 py-2.5 text-right text-teal-700">{margin != null ? fmt(margin, 2) : '—'}</td>}
                     {isManager && <td className="px-4 py-2.5 text-right font-semibold text-indigo-700">{fmt(dp.commission_amount, 2)}</td>}
                   </tr>
@@ -217,58 +229,68 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
       {/* Pricing Stack */}
       <section>
         <h4 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Pricing Stack</h4>
-        <div className="bg-gray-50 rounded-xl p-4 space-y-1.5 text-sm">
-          {totalCogs > 0 ? (
-            <>
-              <div className="flex justify-between">
-                <span className="text-gray-500">Vendor Cost (COGS)</span>
-                <span className="font-medium text-gray-900">{fmt(totalCogs, 2)}</span>
-              </div>
-              <div className="flex justify-between text-teal-700">
-                <span>+ Trilogy Margin</span>
-                <span className="font-medium">+{fmt(baseAcv - totalCogs, 2)}</span>
-              </div>
-              <div className="flex justify-between pt-1.5 border-t border-gray-200">
-                <span className="font-medium text-gray-700">Trilogy ACV</span>
-                <span className="font-medium text-gray-900">{fmt(baseAcv, 2)}</span>
-              </div>
-            </>
-          ) : (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Trilogy ACV (base)</span>
-              <span className="font-medium text-gray-900">{fmt(baseAcv, 2)}</span>
-            </div>
-          )}
-          {partnerStack.map((dp) => (
-            <div key={dp.id} className="flex justify-between text-purple-700">
-              <span>+ {dp.partners?.name} ({dp.commission_pct}%)</span>
-              <span className="font-medium">+{fmt(dp.commission_amount, 2)}</span>
-            </div>
-          ))}
-          <div className="flex justify-between pt-1.5 border-t border-gray-200 font-semibold">
-            <span className="text-gray-900">Customer ACV</span>
-            <span className="text-gray-900">{fmt(customerAcv, 2)}</span>
-          </div>
-          {(() => {
-            const totalSpif = supportTeam.reduce((s, m) => s + (m.spif_amount || 0), 0)
-            const totalPayout = totalCommission + totalSpif
-            // Trilogy receives baseAcv (its own ACV, before partner markup).
-            // It pays out vendor COGS + internal commissions/SPIFs.
-            const trilogyNet = baseAcv - totalCogs - totalPayout
-            return (
-              <>
-                <div className="flex justify-between text-indigo-700 pt-1">
-                  <span>− Internal commissions{totalSpif > 0 ? ' + SPIFs' : ''}</span>
-                  <span className="font-medium">−{fmt(totalPayout, 2)}</span>
+        {(() => {
+          const totalSpif = supportTeam.reduce((s, m) => s + (m.spif_amount || 0), 0)
+          const totalPayout = totalCommission + totalSpif
+          const trilogyNet = baseAcv - totalCogs - totalPayout
+          return (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Stack 1: Customer Price */}
+              <div className="bg-gray-50 rounded-xl p-4 space-y-1.5 text-sm">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Customer Price</p>
+                {totalCogs > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Vendor Cost (COGS)</span>
+                    <span className="font-medium text-gray-900">{fmt(totalCogs, 2)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-teal-700">
+                  <span>+ Trilogy Margin</span>
+                  <span className="font-medium">+{fmt(baseAcv - totalCogs, 2)}</span>
                 </div>
-                <div className="flex justify-between pt-1.5 border-t border-gray-200 font-bold text-base">
+                <div className="flex justify-between pt-1.5 border-t border-gray-200">
+                  <span className="font-medium text-gray-700">Trilogy ACV</span>
+                  <span className="font-medium text-gray-900">{fmt(baseAcv, 2)}</span>
+                </div>
+                {partnerStack.map((dp) => (
+                  <div key={dp.id} className="flex justify-between text-purple-700">
+                    <span>+ {dp.partners?.name} ({dp.commission_pct}%)</span>
+                    <span className="font-medium">+{fmt(dp.commission_amount, 2)}</span>
+                  </div>
+                ))}
+                <div className="flex justify-between pt-1.5 border-t border-gray-200 font-semibold">
+                  <span className="text-gray-900">Customer ACV</span>
+                  <span className="text-gray-900">{fmt(customerAcv, 2)}</span>
+                </div>
+              </div>
+
+              {/* Stack 2: Trilogy Net */}
+              <div className="bg-gray-50 rounded-xl p-4 space-y-1.5 text-sm">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Trilogy Net</p>
+                <div className="flex justify-between">
+                  <span className="font-medium text-gray-700">Trilogy ACV</span>
+                  <span className="font-medium text-gray-900">{fmt(baseAcv, 2)}</span>
+                </div>
+                {totalCogs > 0 && (
+                  <div className="flex justify-between text-red-600">
+                    <span>− Vendor Cost (COGS)</span>
+                    <span className="font-medium">−{fmt(totalCogs, 2)}</span>
+                  </div>
+                )}
+                {!deal.is_tbn_property && totalPayout > 0 && (
+                  <div className="flex justify-between text-red-600">
+                    <span>− Internal Commissions{totalSpif > 0 ? ' + SPIFs' : ''}</span>
+                    <span className="font-medium">−{fmt(totalPayout, 2)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between pt-1.5 border-t border-gray-200 font-bold">
                   <span className="text-gray-900">Trilogy Net</span>
                   <span className={trilogyNet >= 0 ? 'text-teal-700' : 'text-red-600'}>{fmt(trilogyNet, 2)}</span>
                 </div>
-              </>
-            )
-          })()}
-        </div>
+              </div>
+            </div>
+          )
+        })()}
       </section>
 
       {/* Team */}
