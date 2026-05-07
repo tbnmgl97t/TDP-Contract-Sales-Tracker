@@ -664,7 +664,7 @@ export default function DealDetail() {
               <tr className="border-b border-gray-100">
                 <th className="text-left py-2 font-medium text-gray-500 text-xs uppercase tracking-wide">Product</th>
                 <th className="text-left py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden sm:table-cell">Metric</th>
-                <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">Revenue</th>
+                <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">Trilogy Revenue</th>
                 <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">COGS</th>
                 {isManager && !deal.is_tbn_property && <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide">Commission</th>}
               </tr>
@@ -714,7 +714,12 @@ export default function DealDetail() {
               })}
               <tr className="border-t-2 border-gray-200">
                 <td colSpan={2} className="py-2 font-semibold text-navy-900 text-sm">Total</td>
-                <td className="py-2 text-right font-bold text-navy-900 hidden md:table-cell">{fmt(totalRevenue, 2)}</td>
+                <td className="py-2 text-right hidden md:table-cell">
+                  <span className="font-bold text-navy-900">{fmt(totalRevenue, 2)}</span>
+                  {dealPartners.length > 0 && (
+                    <p className="text-xs text-purple-600 font-medium mt-0.5">Customer: {fmt(customerAcv, 2)}</p>
+                  )}
+                </td>
                 <td className="py-2 text-right font-bold text-navy-900 hidden md:table-cell">{fmt(totalCogs, 2)}</td>
                 {isManager && !deal.is_tbn_property && <td className="py-2 text-right font-bold text-primary-600">{fmt(totalCommission, 2)}</td>}
               </tr>
