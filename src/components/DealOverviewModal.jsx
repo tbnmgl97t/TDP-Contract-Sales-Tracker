@@ -1,10 +1,10 @@
 import { useRef } from 'react'
 import { X, Printer } from 'lucide-react'
 import { format } from 'date-fns'
-import { fmt, buildCommissionSchedule } from '../lib/commission'
+import { fmt, buildCommissionSchedule, getMarginTier } from '../lib/commission'
 import { StageBadge } from './ui/Badge'
 
-export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPartners, onClose, isManager }) {
+export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPartners, approval, onClose, isManager }) {
   const printRef = useRef(null)
 
   // Derive COGS for support charges that may not have cogs_amount saved
@@ -118,6 +118,7 @@ export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPa
               quarterGroups={quarterGroups}
               isManager={isManager}
               effectiveCogs={effectiveCogs}
+              approval={approval}
             />
           </div>
         </div>
@@ -149,6 +150,7 @@ export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPa
           quarterGroups={quarterGroups}
           isManager={isManager}
           effectiveCogs={effectiveCogs}
+          approval={approval}
           printMode
         />
       </div>
@@ -156,7 +158,7 @@ export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPa
   )
 }
 
-function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseAcv, partnerStack, customerAcv, salesTeam, supportTeam, quarterGroups, isManager, printMode, effectiveCogs }) {
+function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseAcv, partnerStack, customerAcv, salesTeam, supportTeam, quarterGroups, isManager, printMode, effectiveCogs, approval }) {
   const row = (label, value, accent) => (
     <div className={`flex justify-between text-sm py-1 ${accent ? 'font-semibold' : ''}`}>
       <span className={accent ? 'text-gray-900' : 'text-gray-500'}>{label}</span>
@@ -169,15 +171,39 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
       {/* Deal Info */}
       <section>
         <h4 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Deal Info</h4>
-        <div className="bg-gray-50 rounded-xl p-4 space-y-0.5">
-          {row('Customer', deal.company_name)}
-          {row('Type', deal.deal_type === 'renewal' ? 'Renewal' : 'New Business')}
-          {row('Contract Start', deal.contract_start ? format(new Date(deal.contract_start + 'T12:00:00'), 'MMM d, yyyy') : '—')}
-          {row('Contract End', deal.contract_end ? format(new Date(deal.contract_end + 'T12:00:00'), 'MMM d, yyyy') : '—')}
-          {row('Contract Length', `${deal.contract_months || 12} months`)}
-          {row('Customer ACV', fmt(customerAcv, 2), true)}
+        <div className="bg-gray-50 rounded-xl px-4 py-3 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-sm">
+          {[
+            { label: 'Customer', value: deal.company_name },
+            { label: 'Type', value: deal.deal_type === 'renewal' ? 'Renewal' : 'New Business' },
+            { label: 'Contract Start', value: deal.contract_start ? format(new Date(deal.contract_start + 'T12:00:00'), 'MMM d, yyyy') : '—' },
+            { label: 'Contract End', value: deal.contract_end ? format(new Date(deal.contract_end + 'T12:00:00'), 'MMM d, yyyy') : '—' },
+            { label: 'Length', value: `${deal.contract_months || 12} months` },
+            { label: 'Customer ACV', value: fmt(customerAcv, 2), accent: true },
+          ].map(({ label, value, accent }) => (
+            <div key={label}>
+              <p className="text-xs text-gray-400">{label}</p>
+              <p className={`font-medium truncate ${accent ? 'text-navy-900' : 'text-gray-800'}`}>{value}</p>
+            </div>
+          ))}
         </div>
       </section>
+
+      {/* Margin / Approval banner */}
+      {approval && (() => {
+        const tier = getMarginTier(baseAcv, totalCogs)
+        const styles = { green: 'bg-green-50 border-green-200 text-green-800', yellow: 'bg-yellow-50 border-yellow-200 text-yellow-800', red: 'bg-red-50 border-red-200 text-red-800' }
+        const labels = { green: 'Healthy Margin', yellow: 'Low Margin — Review Required', red: 'Below Minimum Margin' }
+        const dots = { green: 'bg-green-400', yellow: 'bg-yellow-400', red: 'bg-red-400' }
+        const statusLabel = { auto_approved: 'Auto-approved', pending: 'Pending approval', approved: 'Approved', rejected: 'Rejected' }
+        return (
+          <div className={`border rounded-xl px-4 py-2.5 flex items-center gap-2.5 text-sm ${styles[tier] || 'bg-gray-50 border-gray-200 text-gray-700'}`}>
+            <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${dots[tier] || 'bg-gray-400'}`} />
+            <span className="font-semibold">{labels[tier] || 'Margin'}</span>
+            {approval.margin_pct != null && <span className="opacity-75 text-xs">({(approval.margin_pct * 100).toFixed(1)}%)</span>}
+            <span className="text-xs opacity-60">· {statusLabel[approval.status] || approval.status}</span>
+          </div>
+        )
+      })()}
 
       {/* Products */}
       <section>

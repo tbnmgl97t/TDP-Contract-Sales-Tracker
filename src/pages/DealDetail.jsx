@@ -1112,6 +1112,7 @@ export default function DealDetail() {
           dealProducts={dealProducts}
           dealTeam={dealTeam}
           dealPartners={dealPartners}
+          approval={approval}
           onClose={() => setShowOverview(false)}
           isManager={isManager}
         />
