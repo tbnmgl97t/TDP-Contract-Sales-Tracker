@@ -659,74 +659,91 @@ export default function DealDetail() {
       <Card>
         <CardHeader title="Products & Services" subtitle={isManager && !deal.is_tbn_property ? `Total Commission: ${fmt(totalCommission, 2)}` : undefined} />
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100">
-                <th className="text-left py-2 font-medium text-gray-500 text-xs uppercase tracking-wide">Product</th>
-                <th className="text-left py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden sm:table-cell">Metric</th>
-                {dealPartners.length > 0 && <th className="text-right py-2 font-medium text-purple-500 text-xs uppercase tracking-wide hidden md:table-cell">Customer Cost</th>}
-                <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">Trilogy Revenue</th>
-                <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">COGS</th>
-                {isManager && !deal.is_tbn_property && <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide">Commission</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {dealProducts.map((dp) => {
-                const milestones = dp.milestones || []
-                const hasMilestones = milestones.length > 1
-                return (
-                  <>
-                    <tr key={dp.id} className={hasMilestones ? 'border-b-0' : ''}>
-                      <td className="py-3 font-medium text-navy-900">
-                        {dp.products?.name}
-                        {dp.overage_rate && parseFloat(dp.overage_rate) > 0 && (
-                          <p className="text-xs text-gray-400 font-normal mt-0.5">
-                            Overage: ${parseFloat(dp.overage_rate).toFixed(4)}/{dp.products?.unit_label || 'unit'}
-                          </p>
-                        )}
-                      </td>
-                      <td className="py-3 hidden sm:table-cell text-gray-500">{dp.commission_metric}</td>
-                      {dealPartners.length > 0 && (
-                        <td className="py-3 text-right hidden md:table-cell font-semibold text-purple-700">
-                          {fmt((dp.total_revenue || dp.annual_value || dp.yearly_cost || 0) * (productACV > 0 ? customerAcv / productACV : 1), 2)}
-                        </td>
-                      )}
-                      <td className="py-3 text-right hidden md:table-cell text-gray-700">{fmt(dp.total_revenue || dp.annual_value || dp.yearly_cost, 2)}</td>
-                      <td className="py-3 text-right hidden md:table-cell text-gray-500">{effectiveCogs(dp) > 0 ? fmt(effectiveCogs(dp), 2) : '—'}</td>
-                      {isManager && !deal.is_tbn_property && <td className="py-3 text-right font-semibold text-primary-600">{fmt(dp.commission_amount, 2)}</td>}
-                    </tr>
-                    {hasMilestones && milestones.map((m, i) => (
-                      <tr key={`${dp.id}-m-${i}`} className="bg-gray-50/60">
-                        <td className="py-2 pl-6 text-xs text-gray-500" colSpan={1}>
-                          <div className="flex items-center gap-1.5">
-                            <ChevronRight size={11} className="text-gray-300 flex-shrink-0" />
-                            <span className="font-medium text-gray-600">{m.label || `Payment ${i + 1}`}</span>
-                          </div>
-                        </td>
-                        <td className="py-2 hidden sm:table-cell text-xs text-gray-400">
-                          {m.payment_date ? format(new Date(m.payment_date + 'T12:00:00'), 'MMM d, yyyy') : '—'}
-                        </td>
-                        <td className="py-2 text-right text-xs font-medium text-gray-600 hidden md:table-cell">{fmt(parseFloat(m.amount), 2)}</td>
-                        <td className="py-2 hidden md:table-cell" />
-                        {isManager && !deal.is_tbn_property && (
-                          <td className="py-2 text-right text-xs text-gray-400">
-                            {fmt(parseFloat(m.amount) * (dp.base_rate || 0.07), 2)}
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </>
-                )
-              })}
-              <tr className="border-t-2 border-gray-200">
-                <td colSpan={2} className="py-2 font-semibold text-navy-900 text-sm">Total</td>
-                {dealPartners.length > 0 && <td className="py-2 text-right font-bold text-purple-700 hidden md:table-cell">{fmt(customerAcv, 2)}</td>}
-                <td className="py-2 text-right font-bold text-navy-900 hidden md:table-cell">{fmt(totalRevenue, 2)}</td>
-                <td className="py-2 text-right font-bold text-navy-900 hidden md:table-cell">{fmt(totalCogs, 2)}</td>
-                {isManager && !deal.is_tbn_property && <td className="py-2 text-right font-bold text-primary-600">{fmt(totalCommission, 2)}</td>}
-              </tr>
-            </tbody>
-          </table>
+          {(() => {
+            const partnerMultiplier = productACV > 0 ? customerAcv / productACV : 1
+            const fmtRate = (val) => {
+              if (val == null || val === '') return '—'
+              const n = parseFloat(val)
+              if (isNaN(n) || n === 0) return '—'
+              return `$${(n * partnerMultiplier).toFixed(4)}`
+            }
+            const fmtQty = (val) => {
+              if (val == null || val === '') return '—'
+              const n = parseFloat(val)
+              if (isNaN(n) || n === 0) return '—'
+              return n.toLocaleString()
+            }
+            return (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100">
+                    <th className="text-left py-2 font-medium text-gray-500 text-xs uppercase tracking-wide">Product</th>
+                    <th className="text-left py-2 font-medium text-gray-400 text-xs uppercase tracking-wide hidden sm:table-cell italic">Unit</th>
+                    <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">Monthly</th>
+                    <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">Effective Rate</th>
+                    <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">Overage</th>
+                    <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">Total</th>
+                    {isManager && !deal.is_tbn_property && <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide hidden md:table-cell">COGS</th>}
+                    {isManager && !deal.is_tbn_property && <th className="text-right py-2 font-medium text-gray-500 text-xs uppercase tracking-wide">Commission</th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {dealProducts.map((dp) => {
+                    const milestones = dp.milestones || []
+                    const hasMilestones = milestones.length > 1
+                    const prod = dp.products
+                    const isGM = dp.commission_metric === 'GM'
+                    const isSupport = !!prod?.is_support_charge
+                    const lineTotal = (dp.total_revenue || dp.annual_value || dp.yearly_cost || 0) * partnerMultiplier
+                    return (
+                      <>
+                        <tr key={dp.id} className={hasMilestones ? 'border-b-0' : ''}>
+                          <td className="py-3 font-medium text-navy-900">{prod?.name}</td>
+                          <td className="py-3 hidden sm:table-cell text-gray-400 italic text-xs">{isGM && !isSupport ? prod?.unit_label : ''}</td>
+                          <td className="py-3 text-right hidden md:table-cell text-gray-700">{isGM && !isSupport ? fmtQty(dp.monthly_quantity || dp.quantity) : '—'}</td>
+                          <td className="py-3 text-right hidden md:table-cell text-gray-700">{isGM && !isSupport ? fmtRate(dp.unit_price_snapshot) : '—'}</td>
+                          <td className="py-3 text-right hidden md:table-cell text-gray-700">{isGM && !isSupport && dp.overage_rate && parseFloat(dp.overage_rate) > 0 ? fmtRate(dp.overage_rate) : '—'}</td>
+                          <td className="py-3 text-right hidden md:table-cell font-semibold text-purple-700">{fmt(lineTotal, 2)}</td>
+                          {isManager && !deal.is_tbn_property && <td className="py-3 text-right hidden md:table-cell text-gray-500">{effectiveCogs(dp) > 0 ? fmt(effectiveCogs(dp), 2) : '—'}</td>}
+                          {isManager && !deal.is_tbn_property && <td className="py-3 text-right font-semibold text-primary-600">{fmt(dp.commission_amount, 2)}</td>}
+                        </tr>
+                        {hasMilestones && milestones.map((m, i) => (
+                          <tr key={`${dp.id}-m-${i}`} className="bg-gray-50/60">
+                            <td className="py-2 pl-6 text-xs text-gray-500" colSpan={1}>
+                              <div className="flex items-center gap-1.5">
+                                <ChevronRight size={11} className="text-gray-300 flex-shrink-0" />
+                                <span className="font-medium text-gray-600">{m.label || `Payment ${i + 1}`}</span>
+                              </div>
+                            </td>
+                            <td className="py-2 hidden sm:table-cell text-xs text-gray-400">
+                              {m.payment_date ? format(new Date(m.payment_date + 'T12:00:00'), 'MMM d, yyyy') : '—'}
+                            </td>
+                            <td colSpan={3} className="py-2 hidden md:table-cell" />
+                            <td className="py-2 text-right text-xs font-medium text-gray-600 hidden md:table-cell">{fmt(parseFloat(m.amount) * partnerMultiplier, 2)}</td>
+                            {isManager && !deal.is_tbn_property && <td className="py-2 hidden md:table-cell" />}
+                            {isManager && !deal.is_tbn_property && (
+                              <td className="py-2 text-right text-xs text-gray-400">
+                                {fmt(parseFloat(m.amount) * (dp.base_rate || 0.07), 2)}
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </>
+                    )
+                  })}
+                  <tr className="border-t-2 border-gray-200">
+                    <td colSpan={5} className="py-2 font-semibold text-navy-900 text-sm">Annual Investment</td>
+                    <td className="py-2 text-right hidden md:table-cell">
+                      <span className="font-bold text-purple-700">{fmt(customerAcv, 2)}</span>
+                      {dealPartners.length > 0 && <p className="text-xs text-gray-400 mt-0.5">Trilogy: {fmt(totalRevenue, 2)}</p>}
+                    </td>
+                    {isManager && !deal.is_tbn_property && <td className="py-2 text-right font-bold text-gray-500 hidden md:table-cell">{fmt(totalCogs, 2)}</td>}
+                    {isManager && !deal.is_tbn_property && <td className="py-2 text-right font-bold text-primary-600">{fmt(totalCommission, 2)}</td>}
+                  </tr>
+                </tbody>
+              </table>
+            )
+          })()}
           {dealProducts.length === 0 && (
             <p className="text-sm text-gray-400 py-6 text-center">No products added.</p>
           )}
