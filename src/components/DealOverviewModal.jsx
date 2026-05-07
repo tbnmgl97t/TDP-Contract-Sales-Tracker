@@ -174,6 +174,7 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
         <div className="bg-gray-50 rounded-xl px-4 py-3 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 text-sm">
           {[
             { label: 'Customer', value: deal.company_name },
+            { label: 'Stage', value: deal.stage ? deal.stage.charAt(0).toUpperCase() + deal.stage.slice(1) : '—' },
             { label: 'Type', value: deal.deal_type === 'renewal' ? 'Renewal' : 'New Business' },
             { label: 'Contract Start', value: deal.contract_start ? format(new Date(deal.contract_start + 'T12:00:00'), 'MMM d, yyyy') : '—' },
             { label: 'Contract End', value: deal.contract_end ? format(new Date(deal.contract_end + 'T12:00:00'), 'MMM d, yyyy') : '—' },
