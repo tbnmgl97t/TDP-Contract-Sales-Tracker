@@ -285,9 +285,12 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
                   <span className="font-medium text-gray-900">{fmt(baseAcv, 2)}</span>
                 </div>
                 {partnerStack.map((dp) => (
-                  <div key={dp.id} className="flex justify-between text-purple-700">
-                    <span>+ {dp.partners?.name} ({dp.commission_pct}%)</span>
-                    <span className="font-medium">+{fmt(dp.commission_amount, 2)}</span>
+                  <div key={dp.id} className="space-y-0.5">
+                    <div className="flex justify-between text-purple-700">
+                      <span>+ {dp.partners?.name} ({dp.commission_pct}%)</span>
+                      <span className="font-medium">+{fmt(dp.commission_amount, 2)}</span>
+                    </div>
+                    <p className="text-xs text-purple-400 pl-3">{dp.commission_pct}% referral commission</p>
                   </div>
                 ))}
                 <div className="flex justify-between pt-1.5 border-t border-gray-200 font-semibold">
@@ -324,23 +327,8 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
           )
         })()}
 
-        {/* Partner detail rows */}
-        {partnerStack.length > 0 && (
-          <div className="mt-3 divide-y divide-gray-100 border-t border-gray-100 pt-3">
-            {partnerStack.map((dp, i) => (
-              <div key={dp.id} className="flex items-center justify-between py-2.5 text-sm">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center text-purple-700 font-bold text-xs">{i + 1}</div>
-                  <div>
-                    <p className="font-medium text-gray-900">{dp.partners?.name}</p>
-                    <p className="text-xs text-gray-400">{dp.commission_pct}% referral commission</p>
-                  </div>
-                </div>
-                <span className="font-semibold text-purple-700">{fmt(dp.commission_amount, 2)}</span>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Spacer — preserves layout when partners are present */}
+        {partnerStack.length > 0 && <div className="mt-3 pt-3 border-t border-gray-100" />}
       </section>
 
       {/* Team */}
