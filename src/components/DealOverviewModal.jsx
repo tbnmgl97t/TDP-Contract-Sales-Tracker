@@ -317,6 +317,24 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
             </div>
           )
         })()}
+
+        {/* Partner detail rows */}
+        {partnerStack.length > 0 && (
+          <div className="mt-3 divide-y divide-gray-100 border-t border-gray-100 pt-3">
+            {partnerStack.map((dp, i) => (
+              <div key={dp.id} className="flex items-center justify-between py-2.5 text-sm">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center text-purple-700 font-bold text-xs">{i + 1}</div>
+                  <div>
+                    <p className="font-medium text-gray-900">{dp.partners?.name}</p>
+                    <p className="text-xs text-gray-400">{dp.commission_pct}% referral commission</p>
+                  </div>
+                </div>
+                <span className="font-semibold text-purple-700">{fmt(dp.commission_amount, 2)}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Team */}
