@@ -12,7 +12,7 @@ import { buildCommissionSchedule, fmt, getMarginTier } from '../lib/commission'
 import { PageSpinner } from '../components/ui/Spinner'
 import { useUser } from '../contexts/UserContext'
 import DealOverviewModal from '../components/DealOverviewModal'
-import ProposalModal from '../components/ProposalModal'
+import ProposalBuilder from '../components/ProposalBuilder'
 import { format } from 'date-fns'
 import ReactMarkdown from 'react-markdown'
 
@@ -1053,7 +1053,7 @@ export default function DealDetail() {
         />
       )}
       {showProposal && (
-        <ProposalModal
+        <ProposalBuilder
           deal={deal}
           dealProducts={dealProducts}
           dealTeam={dealTeam}

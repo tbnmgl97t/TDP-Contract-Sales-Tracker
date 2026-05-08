@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import Card, { CardHeader } from '../components/ui/Card'
 import Input from '../components/ui/Input'
 import Button from '../components/ui/Button'
+import ProposalSlides from './ProposalSlides'
 
 const INPUT_COST_PER_M = 3.0
 const OUTPUT_COST_PER_M = 15.0
@@ -14,6 +15,7 @@ export default function Settings() {
   const [saved, setSaved] = useState(false)
   const [savedRate, setSavedRate] = useState('')
   const [aiUsage, setAiUsage] = useState(null)
+  const [showSlides, setShowSlides] = useState(false)
 
   useEffect(() => {
     supabase.from('commission_settings').select('global_commission_rate').eq('id', 1).single()
@@ -148,6 +150,15 @@ export default function Settings() {
         ) : (
           <p className="text-sm text-gray-400 py-4 text-center">No AI usage recorded yet.</p>
         )}
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Proposal Slides"
+          subtitle="Manage slide templates used in deal proposals."
+          action={<Button variant="secondary" onClick={() => setShowSlides(!showSlides)}>{showSlides ? 'Hide' : 'Manage Slides'}</Button>}
+        />
+        {showSlides && <ProposalSlides />}
       </Card>
 
       <Card>
