@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Download } from 'lucide-react'
 import { format } from 'date-fns'
 import { fmt } from '../lib/commission'
@@ -342,7 +343,7 @@ export default function ProposalModal({ deal, dealProducts, dealTeam, dealPartne
     document.title = original
   }
 
-  return (
+  return createPortal(
     <>
       <style>{`
         @media print {
@@ -414,6 +415,7 @@ export default function ProposalModal({ deal, dealProducts, dealTeam, dealPartne
           <div key="thanks" className="proposal-slide"><SlideThankYou /></div>,
         ]}
       </div>
-    </>
+    </>,
+    document.body
   )
 }

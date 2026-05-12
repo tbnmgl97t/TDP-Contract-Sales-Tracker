@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { TrendingUp, Handshake, DollarSign, Users, ArrowRight, Landmark, X } from 'lucide-react'
 import { supabase } from '../lib/supabase'
@@ -6,6 +7,8 @@ import Card, { CardHeader } from '../components/ui/Card'
 import { StageBadge } from '../components/ui/Badge'
 import { DEAL_STAGES } from '../lib/constants'
 import { fmt } from '../lib/commission'
+import { calcTotalCommission, calcTotalSpif, calcTotalPayout, calcTrilogyNet, calcEstimatedCommission } from '../lib/deals'
+import { getMarginPct } from '../lib/margin'
 import { PageSpinner } from '../components/ui/Spinner'
 import { useUser } from '../contexts/UserContext'
 
@@ -56,8 +59,8 @@ function EstimatorModal({ deals, dealFinancials, estRate, setEstRate, onClose })
       },
       { commission: 0, dealAcv: 0, cogs: 0 }
     )
-    const commission = isEarly ? acv * (estRate / 100) : fin.commission
-    const marginPct = !isEarly && fin.dealAcv > 0 ? (fin.dealAcv - fin.cogs) / fin.dealAcv : null
+    const commission = isEarly ? calcEstimatedCommission(acv, estRate) : fin.commission
+    const marginPct = !isEarly ? getMarginPct(fin.dealAcv, fin.cogs) : null
     return { key: s.key, label: s.label, count: stageDeals.length, acv, commission, marginPct, isEarly }
   })
 
@@ -93,7 +96,7 @@ function EstimatorModal({ deals, dealFinancials, estRate, setEstRate, onClose })
     ))
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
         {/* Header */}
@@ -157,7 +160,8 @@ function EstimatorModal({ deals, dealFinancials, estRate, setEstRate, onClose })
           </table>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
@@ -217,7 +221,7 @@ export default function Dashboard() {
               return s + (p.annual_value || 0)
             }, 0)
             finMap[id] = {
-              commission: dps.reduce((s, p) => s + (p.commission_amount || 0), 0),
+              commission: calcTotalCommission(dps),
               dealAcv,
               cogs: dps.reduce((s, p) => s + (p.cogs_amount || 0), 0),
             }
@@ -228,8 +232,8 @@ export default function Dashboard() {
           for (const id of contractedIds) {
             const f = finMap[id]
             if (!f) continue
-            const spif = (team || []).filter((t) => t.deal_id === id && t.role === 'support').reduce((s, t) => s + (t.spif_amount || 0), 0)
-            net += f.dealAcv - f.cogs - f.commission - spif
+            const spif = calcTotalSpif((team || []).filter((t) => t.deal_id === id && t.role === 'support'))
+            net += calcTrilogyNet(f.dealAcv, f.cogs, calcTotalPayout(f.commission, spif))
           }
           setTrilogyNet(net)
         } else {

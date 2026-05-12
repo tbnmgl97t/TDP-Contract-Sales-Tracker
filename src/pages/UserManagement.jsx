@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Edit2, KeyRound, UserX, UserCheck } from 'lucide-react'
 import { supabase, adminClient } from '../lib/supabase'
@@ -79,7 +80,7 @@ function UserModal({ user, onClose, onSave }) {
     onClose()
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
         <div className="px-6 py-5 border-b border-gray-100">
@@ -135,7 +136,8 @@ function UserModal({ user, onClose, onSave }) {
           <Button onClick={handleSave} loading={saving}>{isNew ? 'Create User' : 'Save Changes'}</Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
@@ -158,7 +160,7 @@ function ResetPasswordModal({ user, onClose }) {
     setDone(true)
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm">
         <div className="px-6 py-5 border-b border-gray-100">
@@ -181,7 +183,8 @@ function ResetPasswordModal({ user, onClose }) {
           {!done && <Button onClick={handleReset} loading={saving}>Reset Password</Button>}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
