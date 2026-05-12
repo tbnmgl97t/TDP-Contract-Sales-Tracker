@@ -16,6 +16,8 @@ import {
   X,
   Network,
   UserCog,
+  Activity,
+  ClipboardList,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useUser } from '../../contexts/UserContext'
@@ -25,6 +27,7 @@ const MANAGER_NAV = [
   { to: '/deals', icon: Handshake, label: 'Deals' },
   { to: '/commission', icon: DollarSign, label: 'Commission' },
   { to: '/analytics', icon: BarChart2, label: 'Analytics' },
+  { to: '/activity', icon: Activity, label: 'Activity' },
   { divider: true },
   { to: '/products', icon: Package, label: 'Products' },
   { to: '/vendors', icon: Store, label: 'Vendors' },
@@ -32,6 +35,7 @@ const MANAGER_NAV = [
   { to: '/categories', icon: Tag, label: 'Categories' },
   { to: '/people', icon: Users, label: 'People' },
   { to: '/customers', icon: Building2, label: 'Customers' },
+  { to: '/questionnaires', icon: ClipboardList, label: 'Questionnaires' },
   { divider: true },
   { to: '/users', icon: UserCog, label: 'Users' },
   { to: '/settings', icon: Settings, label: 'Settings' },

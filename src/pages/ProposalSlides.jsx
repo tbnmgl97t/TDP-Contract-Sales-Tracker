@@ -14,6 +14,8 @@ export default function ProposalSlides() {
   const [uploading, setUploading] = useState(false)
   const [editModal, setEditModal] = useState(null)  // { template, zones } or null
   const [saving, setSaving] = useState(false)
+  const [renamingId, setRenamingId] = useState(null)
+  const [renameValue, setRenameValue] = useState('')
   const fileInputRef = useRef(null)
 
   async function load() {
@@ -95,6 +97,14 @@ export default function ProposalSlides() {
     load()
   }
 
+  async function renameTemplate(template, newName) {
+    const name = newName.trim()
+    setRenamingId(null)
+    if (!name || name === template.name) return
+    await supabase.from('proposal_slide_templates').update({ name }).eq('id', template.id)
+    load()
+  }
+
   async function moveTemplate(index, dir) {
     const updated = [...templates]
     const target = index + dir
@@ -139,7 +149,27 @@ export default function ProposalSlides() {
               </button>
               <img src={template.image_url} alt={template.name} className="w-20 h-14 object-cover rounded-lg border border-gray-100 flex-shrink-0" />
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-navy-900 text-sm truncate">{template.name}</p>
+                {renamingId === template.id ? (
+                  <input
+                    autoFocus
+                    className="font-medium text-navy-900 text-sm w-full border-b border-primary-400 outline-none bg-transparent pb-0.5"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={() => renameTemplate(template, renameValue)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') renameTemplate(template, renameValue)
+                      if (e.key === 'Escape') setRenamingId(null)
+                    }}
+                  />
+                ) : (
+                  <p
+                    className="font-medium text-navy-900 text-sm truncate cursor-text hover:text-primary-600 transition-colors"
+                    title="Click to rename"
+                    onClick={() => { setRenamingId(template.id); setRenameValue(template.name) }}
+                  >
+                    {template.name}
+                  </p>
+                )}
                 <p className="text-xs text-gray-400 mt-0.5">{template.zones?.length || 0} zone{(template.zones?.length || 0) !== 1 ? 's' : ''}</p>
               </div>
               <div className="flex items-center gap-2">

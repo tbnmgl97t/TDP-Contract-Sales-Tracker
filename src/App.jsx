@@ -18,7 +18,10 @@ import Analytics from './pages/Analytics'
 import Partners from './pages/Partners'
 import Settings from './pages/Settings'
 import UserManagement from './pages/UserManagement'
+import Activity from './pages/Activity'
 import ResetPassword from './pages/ResetPassword'
+import QuestionnairePublic from './pages/QuestionnairePublic'
+import Questionnaires from './pages/Questionnaires'
 import { PageSpinner } from './components/ui/Spinner'
 
 function ProtectedRoute({ children, session }) {
@@ -60,6 +63,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={session ? <Navigate to="/dashboard" replace /> : <Login />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/q/:token" element={<QuestionnairePublic />} />
           <Route
             path="/"
             element={
@@ -83,8 +87,10 @@ export default function App() {
             <Route path="people" element={<ManagerOnly><People /></ManagerOnly>} />
             <Route path="customers" element={<ManagerOnly><Companies /></ManagerOnly>} />
             <Route path="companies" element={<Navigate to="/customers" replace />} />
+            <Route path="activity" element={<ManagerOnly><Activity /></ManagerOnly>} />
             <Route path="settings" element={<ManagerOnly><Settings /></ManagerOnly>} />
             <Route path="users" element={<ManagerOnly><UserManagement /></ManagerOnly>} />
+            <Route path="questionnaires" element={<ManagerOnly><Questionnaires /></ManagerOnly>} />
           </Route>
         </Routes>
       </UserProvider>

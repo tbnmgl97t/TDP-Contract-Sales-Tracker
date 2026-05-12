@@ -6,8 +6,9 @@ import { Select } from './ui/Input'
 import { Trash2, Plus } from 'lucide-react'
 
 // SLIDE_W / SLIDE_H = canvas display size (not PDF size)
-const CANVAS_W = 600
-const CANVAS_H = 778  // maintains Letter aspect ratio (11/8.5 * 600)
+// 16:9 landscape to match 1920×1080 slide designs
+const CANVAS_W = 640
+const CANVAS_H = 360
 
 export default function SlideZoneEditor({ imageUrl, zones, onChange }) {
   const canvasRef = useRef(null)
@@ -31,15 +32,27 @@ export default function SlideZoneEditor({ imageUrl, zones, onChange }) {
     })
     fabricRef.current = canvas
 
-    // Load background image (Fabric v6+ async API)
+    // Load background image (Fabric v7 async API)
     if (imageUrl) {
       FabricImage.fromURL(imageUrl, { crossOrigin: 'anonymous' }).then((img) => {
-        img.set({ selectable: false, evented: false })
-        img.scaleToWidth(CANVAS_W)
+        // Scale image to fit canvas maintaining aspect ratio
+        const scale = Math.min(CANVAS_W / img.width, CANVAS_H / img.height)
+        const scaledW = img.width * scale
+        const scaledH = img.height * scale
+        img.set({
+          left: (CANVAS_W - scaledW) / 2,
+          top: (CANVAS_H - scaledH) / 2,
+          originX: 'left',
+          originY: 'top',
+          scaleX: scale,
+          scaleY: scale,
+          selectable: false,
+          evented: false,
+        })
         canvas.backgroundImage = img
-        canvas.renderAll()
-      }).catch(() => {
-        // Silently ignore CORS errors on background load
+        canvas.requestRenderAll()
+      }).catch((err) => {
+        console.warn('Background image load failed:', err)
       })
     }
 
@@ -75,7 +88,9 @@ export default function SlideZoneEditor({ imageUrl, zones, onChange }) {
     return () => canvas.dispose()
   }, [imageUrl]) // intentionally only on mount / imageUrl change
 
-  // Sync zones → fabric rects whenever zones array changes
+  // Sync zones → fabric rects only when layout changes (position/size/label)
+  // NOT when text content (default_text, font_size, etc.) changes — avoids focus stealing
+  const layoutKey = zones.map((z) => `${z.id}|${z.x_pct}|${z.y_pct}|${z.w_pct}|${z.h_pct}|${z.label}`).join('||')
   useEffect(() => {
     const canvas = fabricRef.current
     if (!canvas) return
@@ -114,7 +129,8 @@ export default function SlideZoneEditor({ imageUrl, zones, onChange }) {
       canvas.add(label)
     })
     canvas.renderAll()
-  }, [zones])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layoutKey])
 
   function addZone() {
     const newZone = {
@@ -147,7 +163,7 @@ export default function SlideZoneEditor({ imageUrl, zones, onChange }) {
     <div className="flex gap-4">
       {/* Canvas */}
       <div className="flex-shrink-0">
-        <canvas ref={canvasRef} style={{ border: '1px solid #e5e7eb', borderRadius: 8, display: 'block' }} />
+        <canvas ref={canvasRef} tabIndex={-1} style={{ border: '1px solid #e5e7eb', borderRadius: 8, display: 'block', outline: 'none' }} />
         <Button size="sm" variant="secondary" icon={<Plus size={14} />} onClick={addZone} className="mt-2">
           Add Zone
         </Button>
@@ -184,7 +200,7 @@ export default function SlideZoneEditor({ imageUrl, zones, onChange }) {
               </button>
             </div>
             {selectedZoneId === zone.id && (
-              <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="mt-3 grid grid-cols-2 gap-2" onClick={(e) => e.stopPropagation()}>
                 <Input label="Font size" type="number" value={zone.font_size} onChange={(e) => updateZone(zone.id, { font_size: parseInt(e.target.value) || 24 })} />
                 <Input label="Font color" type="color" value={zone.font_color} onChange={(e) => updateZone(zone.id, { font_color: e.target.value })} />
                 <Select label="Weight" value={zone.font_weight} onChange={(e) => updateZone(zone.id, { font_weight: e.target.value })}>

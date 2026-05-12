@@ -1,60 +1,46 @@
 import { useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Printer } from 'lucide-react'
 import { format } from 'date-fns'
-import { fmt, buildCommissionSchedule, getMarginTier } from '../lib/commission'
+import { fmt, buildCommissionSchedule } from '../lib/commission'
+import {
+  computeProductAcv,
+  computePartnerStack,
+  calcTotalCogs,
+  calcTotalCommission,
+  calcTotalSpif,
+  calcTotalPayout,
+  calcTrilogyMargin,
+  calcTrilogyNet,
+  calcTotalRevenue,
+  calcIndividualCommission,
+  groupScheduleByQuarter,
+} from '../lib/deals'
+import { effectiveCogs, productLineTotal, resolveMonthlyValue, resolveProductValue } from '../lib/products'
+import { getMarginTier, calcMargin } from '../lib/margin'
 import { StageBadge } from './ui/Badge'
 
-export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPartners, approval, onClose, isManager }) {
+export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPartners, approval, amendments = [], onClose, isManager }) {
   const printRef = useRef(null)
 
-  // Derive COGS for support charges that may not have cogs_amount saved
-  function effectiveCogs(dp) {
-    if (dp.cogs_amount) return dp.cogs_amount
-    if (dp.products?.is_support_charge && dp.support_cogs_pct != null) {
-      return (dp.annual_value || 0) * dp.support_cogs_pct / 100
-    }
-    return 0
-  }
+  // Active products only for ACV / margin / commission totals
+  const activeProducts = dealProducts.filter((dp) => dp.status !== 'cancelled')
 
-  // Totals
-  const totalCogs = dealProducts.reduce((s, p) => s + effectiveCogs(p), 0)
-  const totalCommission = dealProducts.reduce((s, p) => s + (p.commission_amount || 0), 0)
-
-  // ACV
-  const productACV = dealProducts.reduce((s, p) => {
-    if (p.commission_metric === 'GM') {
-      if (p.monthly_cost != null && p.monthly_cost > 0) return s + p.monthly_cost * 12
-      return s + (p.yearly_cost || (p.net_revenue || 0) + (p.cogs_amount || 0))
-    }
-    return s + (p.annual_value || 0)
-  }, 0)
+  const totalCogs = calcTotalCogs(activeProducts)
+  const totalCommission = calcTotalCommission(activeProducts)
+  const productACV = computeProductAcv(activeProducts)
   const baseAcv = productACV > 0 ? productACV : (deal.acv || 0)
+  const { partnerStack, customerAcv, partnerMultiplier } = computePartnerStack(baseAcv, dealPartners)
 
-  // Partner stack
-  let _cv = baseAcv
-  const partnerStack = dealPartners.map((dp) => {
-    const pct = parseFloat(dp.commission_pct) / 100
-    const prev = _cv
-    _cv = pct > 0 && pct < 1 ? prev / (1 - pct) : prev
-    return { ...dp, commission_amount: _cv - prev }
-  })
-  const customerAcv = _cv
-
-  // Team
   const salesTeam = dealTeam.filter((m) => m.role === 'sales')
   const supportTeam = dealTeam.filter((m) => m.role === 'support')
 
-  // Commission schedule (manager only)
+  // Pass all products to schedule — cancelled ones self-prorate via shortened billing_months
   const schedule = isManager
     ? buildCommissionSchedule(deal, dealProducts, dealTeam.map((m) => ({ ...m, person_name: m.people?.name })))
     : []
 
-  const quarterGroups = schedule.reduce((acc, entry) => {
-    const key = `${entry.year} Q${entry.quarter}`
-    if (!acc[key]) acc[key] = { key, quarter: entry.quarter, year: entry.year, entries: [] }
-    acc[key].entries.push(entry)
-    return acc
-  }, {})
+  const quarterGroups = groupScheduleByQuarter(schedule)
 
   function handlePrint() {
     const original = document.title
@@ -63,7 +49,7 @@ export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPa
     document.title = original
   }
 
-  return (
+  return createPortal(
     <>
       {/* Print isolation styles */}
       <style>{`
@@ -108,16 +94,18 @@ export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPa
             <OverviewContent
               deal={deal}
               dealProducts={dealProducts}
+              activeProducts={activeProducts}
+              amendments={amendments}
               totalCogs={totalCogs}
               totalCommission={totalCommission}
               baseAcv={baseAcv}
               partnerStack={partnerStack}
               customerAcv={customerAcv}
+              partnerMultiplier={partnerMultiplier}
               salesTeam={salesTeam}
               supportTeam={supportTeam}
               quarterGroups={quarterGroups}
               isManager={isManager}
-              effectiveCogs={effectiveCogs}
               approval={approval}
             />
           </div>
@@ -140,25 +128,29 @@ export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPa
         <OverviewContent
           deal={deal}
           dealProducts={dealProducts}
+          activeProducts={activeProducts}
+          amendments={amendments}
           totalCogs={totalCogs}
           totalCommission={totalCommission}
           baseAcv={baseAcv}
           partnerStack={partnerStack}
           customerAcv={customerAcv}
+          partnerMultiplier={partnerMultiplier}
           salesTeam={salesTeam}
           supportTeam={supportTeam}
           quarterGroups={quarterGroups}
           isManager={isManager}
-          effectiveCogs={effectiveCogs}
           approval={approval}
           printMode
         />
       </div>
-    </>
+    </>,
+    document.body
   )
 }
 
-function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseAcv, partnerStack, customerAcv, salesTeam, supportTeam, quarterGroups, isManager, printMode, effectiveCogs, approval }) {
+function OverviewContent({ deal, dealProducts, activeProducts, amendments, totalCogs, totalCommission, baseAcv, partnerStack, customerAcv, partnerMultiplier, salesTeam, supportTeam, quarterGroups, isManager, printMode, approval }) {
+  const contractMonths = deal.contract_months || 12
   const row = (label, value, accent) => (
     <div className={`flex justify-between text-sm py-1 ${accent ? 'font-semibold' : ''}`}>
       <span className={accent ? 'text-gray-900' : 'text-gray-500'}>{label}</span>
@@ -180,6 +172,15 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
             { label: 'Contract End', value: deal.contract_end ? format(new Date(deal.contract_end + 'T12:00:00'), 'MMM d, yyyy') : '—' },
             { label: 'Length', value: `${deal.contract_months || 12} months` },
             { label: 'Customer ACV', value: fmt(customerAcv, 2), accent: true },
+            (() => {
+              const rate = deal.commission_locked_rate
+                ?? dealProducts.find((dp) => dp.base_rate != null)?.base_rate
+              const locked = deal.stage === 'contracted' && deal.commission_locked_rate != null
+              return {
+                label: locked ? 'Commission Rate (Locked)' : 'Commission Rate',
+                value: rate != null ? `${(parseFloat(rate) * 100).toFixed(2)}%` : '—',
+              }
+            })(),
           ].map(({ label, value, accent }) => (
             <div key={label}>
               <p className="text-xs text-gray-400">{label}</p>
@@ -211,12 +212,11 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
         <h4 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Customer Pricing</h4>
         <div className="rounded-xl border border-gray-100 overflow-x-auto">
           {(() => {
-            const m = baseAcv > 0 ? customerAcv / baseAcv : 1
             const fmtRate = (val, dec = 4) => {
               if (val == null || val === '') return '—'
               const n = parseFloat(val)
               if (isNaN(n) || n === 0) return '—'
-              return `$${(n * m).toFixed(dec)}`
+              return `$${(n * partnerMultiplier).toFixed(dec)}`
             }
             const fmtRaw = (val, dec = 4) => {
               if (val == null || val === '') return '—'
@@ -248,15 +248,41 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
                     if (!prod) return null
                     const isGM = dp.commission_metric === 'GM'
                     const isSupport = !!prod.is_support_charge
-                    const lineTotal = (dp.total_revenue || dp.annual_value || dp.yearly_cost || 0) * m
+                    const isCancelled = dp.status === 'cancelled'
+                    const lineTotal = productLineTotal(dp, partnerMultiplier)
+                    const monthlyVal = resolveMonthlyValue(dp, partnerMultiplier)
+                    const monthlyCell = isGM && !isSupport
+                      ? fmtQty(dp.monthly_quantity || dp.quantity)
+                      : monthlyVal != null ? fmt(monthlyVal, 2) : '—'
+                    const activeMonths = isCancelled ? (dp.billing_months ?? contractMonths) : contractMonths
+                    const paidAmount = isCancelled ? lineTotal * (activeMonths / contractMonths) : lineTotal
+                    const cancelAmendment = isCancelled && dp.cancellation_amendment_id
+                      ? amendments.find((a) => a.id === dp.cancellation_amendment_id)
+                      : null
                     return (
-                      <tr key={dp.id}>
-                        <td className="px-4 py-2.5 font-medium text-gray-900">{prod.name}</td>
+                      <tr key={dp.id} className={isCancelled ? 'opacity-60' : ''}>
+                        <td className="px-4 py-2.5 font-medium text-gray-900">
+                          <span className={isCancelled ? 'line-through text-gray-400' : ''}>{prod.name}</span>
+                          {isCancelled && (
+                            <span className="ml-2 text-[11px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 font-normal">
+                              Cancelled{cancelAmendment?.effective_date ? ` ${format(new Date(cancelAmendment.effective_date + 'T12:00:00'), 'MMM d, yyyy')}` : ''}
+                            </span>
+                          )}
+                        </td>
                         <td className="px-4 py-2.5 text-gray-400 italic text-xs">{isGM && !isSupport ? prod.unit_label : ''}</td>
-                        <td className="px-4 py-2.5 text-right text-gray-700">{isGM && !isSupport ? fmtQty(dp.monthly_quantity || dp.quantity) : '—'}</td>
-                        <td className="px-4 py-2.5 text-right text-gray-700">{isGM && !isSupport ? fmtRate(dp.unit_price_snapshot) : '—'}</td>
-                        <td className="px-4 py-2.5 text-right text-gray-700">{isGM && !isSupport && dp.overage_rate && parseFloat(dp.overage_rate) > 0 ? fmtRaw(dp.overage_rate) : '—'}</td>
-                        <td className="px-4 py-2.5 text-right font-semibold text-purple-700">{fmt(lineTotal, 2)}</td>
+                        <td className="px-4 py-2.5 text-right text-gray-700">{isCancelled ? '—' : monthlyCell}</td>
+                        <td className="px-4 py-2.5 text-right text-gray-700">{!isCancelled && isGM && !isSupport ? fmtRate(dp.unit_price_snapshot) : '—'}</td>
+                        <td className="px-4 py-2.5 text-right text-gray-700">{!isCancelled && isGM && !isSupport && dp.overage_rate && parseFloat(dp.overage_rate) > 0 ? fmtRaw(dp.overage_rate) : '—'}</td>
+                        <td className="px-4 py-2.5 text-right">
+                          {isCancelled ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="font-semibold text-amber-700">{fmt(paidAmount, 2)}</span>
+                              <span className="text-[11px] text-gray-400">{activeMonths} of {contractMonths} mo · <span className="line-through">{fmt(lineTotal, 2)}</span></span>
+                            </div>
+                          ) : (
+                            <span className="font-semibold text-purple-700">{fmt(lineTotal, 2)}</span>
+                          )}
+                        </td>
                       </tr>
                     )
                   })}
@@ -288,31 +314,71 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
             </thead>
             <tbody className="divide-y divide-gray-50">
               {dealProducts.map((dp) => {
-                const revenue = dp.total_revenue || dp.annual_value || dp.yearly_cost || 0
+                const isCancelled = dp.status === 'cancelled'
+                const revenue = resolveProductValue(dp)
                 const dpCogs = effectiveCogs(dp)
-                const margin = totalCogs > 0 ? revenue - dpCogs : null
-                const partnerMultiplier = baseAcv > 0 ? customerAcv / baseAcv : 1
-                const customerCost = revenue * partnerMultiplier
+                const margin = totalCogs > 0 ? calcMargin(revenue, dpCogs) : null
+                const customerCost = productLineTotal(dp, partnerMultiplier)
+                const activeMonths = isCancelled ? (dp.billing_months ?? contractMonths) : contractMonths
+                const lostFraction = isCancelled ? Math.max(0, contractMonths - activeMonths) / contractMonths : 0
+                const paidRevenue = isCancelled ? revenue * (activeMonths / contractMonths) : revenue
+                const paidCustomerCost = isCancelled ? customerCost * (activeMonths / contractMonths) : customerCost
+                const paidCommission = isCancelled ? (dp.commission_amount ?? 0) * (activeMonths / contractMonths) : dp.commission_amount
+                const cancelAmendment = isCancelled && dp.cancellation_amendment_id
+                  ? amendments.find((a) => a.id === dp.cancellation_amendment_id)
+                  : null
                 return (
-                  <tr key={dp.id}>
-                    <td className="px-4 py-2.5 font-medium text-gray-900">{dp.products?.name}</td>
-                    {partnerStack.length > 0 && <td className="px-4 py-2.5 text-right font-semibold text-purple-700">{fmt(customerCost, 2)}</td>}
-                    <td className="px-4 py-2.5 text-right text-gray-700">{fmt(revenue, 2)}</td>
-                    {totalCogs > 0 && isManager && <td className="px-4 py-2.5 text-right text-teal-700">{margin != null ? fmt(margin, 2) : '—'}</td>}
-                    {totalCogs > 0 && <td className="px-4 py-2.5 text-right text-gray-500">{dpCogs > 0 ? fmt(dpCogs, 2) : '—'}</td>}
-                    {isManager && <td className="px-4 py-2.5 text-right font-semibold text-indigo-700">{fmt(dp.commission_amount, 2)}</td>}
+                  <tr key={dp.id} className={isCancelled ? 'opacity-60' : ''}>
+                    <td className="px-4 py-2.5 font-medium text-gray-900">
+                      <span className={isCancelled ? 'line-through text-gray-400' : ''}>{dp.products?.name}</span>
+                      {isCancelled && (
+                        <span className="ml-2 text-[11px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 font-normal">
+                          Cancelled{cancelAmendment?.effective_date ? ` ${format(new Date(cancelAmendment.effective_date + 'T12:00:00'), 'MMM d, yyyy')}` : ''}
+                        </span>
+                      )}
+                    </td>
+                    {partnerStack.length > 0 && (
+                      <td className="px-4 py-2.5 text-right font-semibold text-purple-700">
+                        {isCancelled ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="text-amber-700">{fmt(paidCustomerCost, 2)}</span>
+                            <span className="text-[11px] text-gray-400 line-through">{fmt(customerCost, 2)}</span>
+                          </div>
+                        ) : fmt(customerCost, 2)}
+                      </td>
+                    )}
+                    <td className="px-4 py-2.5 text-right text-gray-700">
+                      {isCancelled ? (
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="text-amber-700">{fmt(paidRevenue, 2)}</span>
+                          <span className="text-[11px] text-gray-400 line-through">{fmt(revenue, 2)}</span>
+                        </div>
+                      ) : fmt(revenue, 2)}
+                    </td>
+                    {totalCogs > 0 && isManager && <td className="px-4 py-2.5 text-right text-teal-700">{!isCancelled && margin != null ? fmt(margin, 2) : '—'}</td>}
+                    {totalCogs > 0 && <td className="px-4 py-2.5 text-right text-gray-500">{!isCancelled && dpCogs > 0 ? fmt(dpCogs, 2) : '—'}</td>}
+                    {isManager && (
+                      <td className="px-4 py-2.5 text-right font-semibold text-indigo-700">
+                        {isCancelled ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="text-amber-700">{fmt(paidCommission, 2)}</span>
+                            <span className="text-[11px] text-gray-400 line-through">{fmt(dp.commission_amount, 2)}</span>
+                          </div>
+                        ) : fmt(dp.commission_amount, 2)}
+                      </td>
+                    )}
                   </tr>
                 )
               })}
               <tr className="border-t-2 border-gray-200 bg-gray-50">
-                <td className="px-4 py-2.5 font-semibold text-gray-900 text-sm">Total</td>
+                <td className="px-4 py-2.5 font-semibold text-gray-900 text-sm">Total (active)</td>
                 {partnerStack.length > 0 && <td className="px-4 py-2.5 text-right font-bold text-purple-700">{fmt(customerAcv, 2)}</td>}
                 <td className="px-4 py-2.5 text-right font-bold text-gray-900">
-                  {fmt(dealProducts.reduce((s, p) => s + (p.total_revenue || p.annual_value || p.yearly_cost || 0), 0), 2)}
+                  {fmt(calcTotalRevenue(activeProducts), 2)}
                 </td>
                 {totalCogs > 0 && isManager && (
                   <td className="px-4 py-2.5 text-right font-bold text-teal-700">
-                    {fmt(dealProducts.reduce((s, p) => s + (p.total_revenue || p.annual_value || p.yearly_cost || 0) - effectiveCogs(p), 0), 2)}
+                    {fmt(calcTotalRevenue(activeProducts) - totalCogs, 2)}
                   </td>
                 )}
                 {totalCogs > 0 && <td className="px-4 py-2.5 text-right font-bold text-gray-700">{fmt(totalCogs, 2)}</td>}
@@ -327,9 +393,9 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
       <section>
         <h4 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Pricing Stack</h4>
         {(() => {
-          const totalSpif = supportTeam.reduce((s, m) => s + (m.spif_amount || 0), 0)
-          const totalPayout = totalCommission + totalSpif
-          const trilogyNet = baseAcv - totalCogs - totalPayout
+          const totalSpif = calcTotalSpif(supportTeam)
+          const totalPayout = calcTotalPayout(totalCommission, totalSpif)
+          const trilogyNet = calcTrilogyNet(baseAcv, totalCogs, totalPayout)
           return (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {/* Stack 1: Customer Price */}
@@ -343,7 +409,7 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
                 )}
                 <div className="flex justify-between text-teal-700">
                   <span>+ Trilogy Margin</span>
-                  <span className="font-medium">+{fmt(baseAcv - totalCogs, 2)}</span>
+                  <span className="font-medium">+{fmt(calcTrilogyMargin(baseAcv, totalCogs), 2)}</span>
                 </div>
                 <div className="flex justify-between pt-1.5 border-t border-gray-200">
                   <span className="font-medium text-gray-700">Trilogy ACV</span>
@@ -408,8 +474,8 @@ function OverviewContent({ deal, dealProducts, totalCogs, totalCommission, baseA
                   <span className="text-gray-400 ml-2 text-xs">Sales</span>
                 </div>
                 {isManager
-                  ? <span className="font-medium text-indigo-700">{m.commission_percent}% · {fmt(totalCommission * (m.commission_percent / 100), 2)}</span>
-                  : <span className="font-medium text-indigo-700">{fmt(totalCommission * (m.commission_percent / 100), 2)}</span>
+                  ? <span className="font-medium text-indigo-700">{m.commission_percent}% · {fmt(calcIndividualCommission(totalCommission, m.commission_percent), 2)}</span>
+                  : <span className="font-medium text-indigo-700">{fmt(calcIndividualCommission(totalCommission, m.commission_percent), 2)}</span>
                 }
               </div>
             ))}

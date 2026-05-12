@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Plus, Trash2, Info, ChevronUp, ChevronDown, Network } from 'lucide-react'
+import { Plus, Trash2, Info, ChevronUp, ChevronDown, Network, Lock } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useUser } from '../contexts/UserContext'
 import Button from '../components/ui/Button'
@@ -8,7 +8,10 @@ import Input, { Select, Textarea } from '../components/ui/Input'
 import CurrencyInput from '../components/ui/CurrencyInput'
 import Card, { CardHeader } from '../components/ui/Card'
 import { DEAL_STAGES, DEAL_TYPES } from '../lib/constants'
-import { calcJwxValues, calcProductCommission, calcSpif, fmt, getMarginTier } from '../lib/commission'
+import { calcProductCommission, calcSpif, fmt } from '../lib/commission'
+import { calcTotalCommission, calcTrilogyMargin, calcMonthsBetweenDates } from '../lib/deals'
+import { calcJwxValues, applyDiscount, applyMarkup, calcUnitPriceFromMargin, calcMarginPctFromRate, calcSupportCharge, calcMilestoneTotal, resolveProductValue, resolveMonthlyValue, effectiveCogs } from '../lib/products'
+import { getMarginTier, getMarginPct } from '../lib/margin'
 import { PageSpinner } from '../components/ui/Spinner'
 
 function ProductRow({ item, allItems, products, vendors, pricingMap, contractMonths, contractEnd, globalRate, onChange, onRemove, onMoveUp, onMoveDown, isFirst, isLast, isManager, isTbn, partnerMultiplier = 1 }) {
@@ -32,14 +35,14 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
     if (isQuantityBased) {
       totalCogs = (parseFloat(next._cogs_per_item) || 0) * qty * contractMonths
       listPr = gmType === 'percent'
-        ? totalCogs * (1 + (parseFloat(next.markup_pct) || 0) / 100)
+        ? applyMarkup(totalCogs, parseFloat(next.markup_pct) || 0)
         : (parseFloat(next._list_price_per_item) || 0) * qty * contractMonths
     } else if (gmType === 'percent') {
-      listPr = totalCogs * (1 + (parseFloat(next.markup_pct) || 0) / 100)
+      listPr = applyMarkup(totalCogs, parseFloat(next.markup_pct) || 0)
     }
 
     const disc = parseFloat(next.discount_pct) || 0
-    onChange({ ...next, cogs_amount: totalCogs, list_price: listPr, yearly_cost: listPr * (1 - disc / 100) })
+    onChange({ ...next, cogs_amount: totalCogs, list_price: listPr, yearly_cost: applyDiscount(listPr, disc) })
   }
 
   useEffect(() => {
@@ -84,10 +87,10 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
         const qty = parseInt(item.quantity) || 0
         cogsAmt = (parseFloat(item._cogs_per_item) || 0) * qty * contractMonths
         const listPr = item._margin_type === 'percent'
-          ? cogsAmt * (1 + (parseFloat(item.markup_pct) || 0) / 100)
+          ? applyMarkup(cogsAmt, parseFloat(item.markup_pct) || 0)
           : (parseFloat(item._list_price_per_item) || 0) * qty * contractMonths
         const disc = parseFloat(item.discount_pct) || 0
-        yearlyCost = listPr * (1 - disc / 100)
+        yearlyCost = applyDiscount(listPr, disc)
         if (cogsAmt !== (parseFloat(item.cogs_amount) || 0) || listPr !== (parseFloat(item.list_price) || 0) || yearlyCost !== (parseFloat(item.yearly_cost) || 0)) {
           displayUpdates.cogs_amount = cogsAmt
           displayUpdates.list_price = listPr
@@ -104,26 +107,31 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
     } else {
       const freq = product.billing_frequency || 'monthly'
       if (freq === 'milestone') {
-        const totalValue = parseFloat(item._milestone_total) || 0
+        const listValue = parseFloat(item._milestone_total) || 0
+        const disc = parseFloat(item.discount_pct) || 0
+        const totalValue = applyDiscount(listValue, disc)
         const commission = calcProductCommission({ commission_metric: 'NAVC/RAV', base_rate: effectiveRate, annual_value: totalValue })
-        if (totalValue !== (parseFloat(item.annual_value) || 0) || commission !== (parseFloat(item.commission_amount) || 0)) {
-          onChange({ ...item, annual_value: totalValue, commission_amount: commission, commission_metric: product.commission_metric, base_rate: effectiveRate })
+        if (Math.abs(totalValue - (parseFloat(item.annual_value) || 0)) > 0.001 || Math.abs(commission - (parseFloat(item.commission_amount) || 0)) > 0.001) {
+          onChange({ ...item, annual_value: totalValue, list_price: listValue, commission_amount: commission, commission_metric: product.commission_metric, base_rate: effectiveRate })
         }
       } else {
         const enteredValue = parseFloat(item.monthly_value) || 0
+        const disc = parseFloat(item.discount_pct) || 0
         const effectiveMonths = parseInt(item.billing_months) || (freq === 'monthly' ? contractMonths : 1)
-        const annual = freq === 'monthly' ? enteredValue * effectiveMonths : enteredValue
+        const baseAnnual = freq === 'monthly' ? enteredValue * effectiveMonths : enteredValue
+        const annual = applyDiscount(baseAnnual, disc)
         const commission = calcProductCommission({ commission_metric: 'NAVC/RAV', base_rate: effectiveRate, annual_value: annual })
-        onChange({ ...item, annual_value: annual, commission_amount: commission, commission_metric: product.commission_metric, base_rate: effectiveRate })
+        onChange({ ...item, annual_value: annual, list_price: baseAnnual, commission_amount: commission, commission_metric: product.commission_metric, base_rate: effectiveRate })
       }
     }
-  }, [item.product_id, item.monthly_quantity, item.unit_price, item.cogs_per_unit, item._trilogy_margin_pct, item.monthly_value, item.yearly_cost, item.cogs_amount, item.discount_pct, item.quantity, item._milestone_total, item.billing_months, item.billing_mode, contractMonths, globalRate])
+  }, [item.product_id, item.monthly_quantity, item.unit_price, item.cogs_per_unit, item._trilogy_margin_pct, item.monthly_value, item.yearly_cost, item.cogs_amount, item.discount_pct, item.quantity, item._milestone_total, item.billing_months, item.billing_mode, item.discount_pct, contractMonths, globalRate])
 
-  // Support charge: Revenue = support% × sum(linked revenues), COGS = support% × sum(linked COGS)
+  // Support charge: Revenue = support% × sum(linked revenues) × (1 - discount%)
   useEffect(() => {
     if (!product?.is_support_charge) return
     const effectiveRate = product.rate_overridden ? product.base_rate : globalRate
     const pct = parseFloat(item.support_pct) ?? parseFloat(product.default_support_pct) ?? 15
+    const disc = parseFloat(item.discount_pct) || 0
     const selectedPids = item.support_product_ids || []
     const itemKey = item._id || item.id
     const linked = allItems.filter((dp) => {
@@ -138,13 +146,11 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
       return sum + (dp.annual_value || 0)
     }, 0)
     const baseCogs = linked.reduce((sum, dp) => sum + (dp.cogs_amount || 0), 0)
-    const revenue = baseRevenue * (pct / 100)
-    const cogs = baseCogs * (pct / 100)
-    const commission = calcProductCommission({ commission_metric: 'NAVC/RAV', base_rate: effectiveRate, annual_value: revenue })
+    const { listRevenue, revenue, cogs, commission } = calcSupportCharge(pct, disc, baseRevenue, baseCogs, effectiveRate)
     if (Math.abs(revenue - (item.annual_value || 0)) > 0.001 || Math.abs(commission - (item.commission_amount || 0)) > 0.001 || Math.abs(cogs - (item.cogs_amount || 0)) > 0.001) {
-      onChange({ ...item, annual_value: revenue, cogs_amount: cogs, commission_amount: commission, commission_metric: 'NAVC/RAV', base_rate: effectiveRate })
+      onChange({ ...item, annual_value: revenue, list_price: listRevenue, cogs_amount: cogs, commission_amount: commission, commission_metric: 'NAVC/RAV', base_rate: effectiveRate })
     }
-  }, [item.product_id, item.support_pct, JSON.stringify(item.support_product_ids), allItems, globalRate])
+  }, [item.product_id, item.support_pct, item.discount_pct, JSON.stringify(item.support_product_ids), allItems, globalRate])
 
   return (
     <div className="border border-gray-100 rounded-xl p-4 space-y-3">
@@ -262,7 +268,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
                 const marginPct = parseFloat(item._trilogy_margin_pct)
                 let unitPrice = item.unit_price
                 if (!isNaN(marginPct) && marginPct >= 0 && marginPct < 100 && cogs > 0) {
-                  unitPrice = cogs / (1 - marginPct / 100)
+                  unitPrice = calcUnitPriceFromMargin(cogs, marginPct)
                 }
                 onChange({ ...item, cogs_per_unit: v, unit_price: unitPrice })
               }}
@@ -276,7 +282,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               suffix="%"
               disabled={!isManager}
               hint={item.cogs_per_unit && item._trilogy_margin_pct !== '' && parseFloat(item._trilogy_margin_pct) >= 0
-                ? `Rate: $${(parseFloat(item.cogs_per_unit) / (1 - parseFloat(item._trilogy_margin_pct) / 100)).toFixed(4)}`
+                ? `Rate: $${calcUnitPriceFromMargin(parseFloat(item.cogs_per_unit), parseFloat(item._trilogy_margin_pct)).toFixed(4)}`
                 : undefined}
               value={item._trilogy_margin_pct ?? ''}
               onChange={(e) => {
@@ -284,7 +290,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
                 const pctNum = parseFloat(pct)
                 const cogs = parseFloat(item.cogs_per_unit) || 0
                 const rate = (!isNaN(pctNum) && pctNum >= 0 && pctNum < 100 && cogs > 0)
-                  ? cogs / (1 - pctNum / 100)
+                  ? calcUnitPriceFromMargin(cogs, pctNum)
                   : item.unit_price
                 onChange({ ...item, _trilogy_margin_pct: pct, unit_price: rate })
               }}
@@ -297,7 +303,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               onChange={(v) => {
                 const rate = parseFloat(v) || 0
                 const cogs = parseFloat(item.cogs_per_unit) || 0
-                const pct = rate > 0 && cogs > 0 ? parseFloat(((1 - cogs / rate) * 100).toFixed(2)) : ''
+                const pct = rate > 0 && cogs > 0 ? parseFloat(calcMarginPctFromRate(cogs, rate).toFixed(2)) : ''
                 onChange({ ...item, unit_price: v, _trilogy_margin_pct: pct })
               }}
             />
@@ -369,7 +375,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
 
       {product && isSupportCharge && (
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <Input
               label="Support %"
               type="number" min="0" max="100" step="0.1" suffix="%"
@@ -377,9 +383,18 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               value={item.support_pct ?? (product.default_support_pct ?? 15)}
               onChange={(e) => onChange({ ...item, support_pct: parseFloat(e.target.value) || 0 })}
             />
+            <Input
+              label="Discount %"
+              type="number" min="0" max="100" step="0.1" suffix="%"
+              value={item.discount_pct || ''}
+              onChange={(e) => onChange({ ...item, discount_pct: parseFloat(e.target.value) || 0 })}
+            />
             {(() => {
               const cogs = item.cogs_amount || 0
               const rev = item.annual_value || 0
+              const listRev = parseFloat(item.list_price) || 0
+              const disc = parseFloat(item.discount_pct) || 0
+              const hasDiscount = disc > 0 && listRev > 0
               const marginPct = cogs > 0 && rev > 0 ? (rev - cogs) / rev : null
               return (
                 <div className="space-y-1">
@@ -389,9 +404,12 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
                       <span className="text-gray-500">COGS</span>
                       <span className="font-medium text-navy-900">{cogs > 0 ? fmt(cogs, 2) : '—'}</span>
                     </div>
-                    <div className="flex justify-between">
+                    <div className="flex justify-between items-end">
                       <span className="text-gray-500">Revenue</span>
-                      <span className="font-medium text-navy-900">{rev > 0 ? fmt(rev, 2) : '—'}</span>
+                      <span className="text-right">
+                        {hasDiscount && <p className="text-gray-400 line-through text-[11px]">{fmt(listRev, 2)}</p>}
+                        <span className="font-medium text-navy-900">{rev > 0 ? fmt(rev, 2) : '—'}</span>
+                      </span>
                     </div>
                     {marginPct != null && (
                       <div className="flex justify-between">
@@ -519,7 +537,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
                   label="Markup %"
                   type="number" min="0" step="0.1" suffix="%"
                   hint={item.cogs_amount
-                    ? `List Price: ${fmt((parseFloat(item.cogs_amount) || 0) * (1 + (parseFloat(item.markup_pct) || 0) / 100), 2)}`
+                    ? `List Price: ${fmt(applyMarkup(parseFloat(item.cogs_amount) || 0, parseFloat(item.markup_pct) || 0), 2)}`
                     : 'List Price = COGS × (1 + markup%)'}
                   value={item.markup_pct || ''}
                   onChange={(e) => handleGMChange({ ...item, markup_pct: parseFloat(e.target.value) || 0 })}
@@ -537,7 +555,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
                   {(() => {
                     const rev = parseFloat(item.list_price) || 0
                     const cogs = parseFloat(item.cogs_amount) || 0
-                    const marginPct = rev > 0 ? (rev - cogs) / rev : null
+                    const marginPct = getMarginPct(rev, cogs)
                     return marginPct != null ? (
                       <p className={`font-bold ${marginPct >= 0.30 ? 'text-green-600' : marginPct >= 0.15 ? 'text-yellow-600' : 'text-red-600'}`}>
                         {(marginPct * 100).toFixed(1)}%
@@ -557,7 +575,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
           )}
 
           {(isQuantityBased || gmType === 'percent') && (() => {
-            const marginPct = item.yearly_cost > 0 ? (item.yearly_cost - (parseFloat(item.cogs_amount) || 0)) / item.yearly_cost : null
+            const marginPct = getMarginPct(item.yearly_cost, parseFloat(item.cogs_amount) || 0)
             const cols = isManager && !isTbn ? 'grid-cols-5' : 'grid-cols-4'
             return (
               <div className={`bg-gray-50 rounded-lg p-3 grid gap-3 text-xs ${cols}`}>
@@ -568,7 +586,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
                 <div>
                   <p className="text-gray-500">
                     {gmType === 'percent'
-                      ? `List Price (×${(1 + (parseFloat(item.markup_pct) || 0) / 100).toFixed(2)})`
+                      ? `List Price (×${(applyMarkup(1, parseFloat(item.markup_pct) || 0)).toFixed(2)})`
                       : 'List Price'}
                   </p>
                   <p className="font-medium text-navy-900 mt-0.5">{fmt(item.list_price, 2)}</p>
@@ -603,8 +621,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               type="button"
               onClick={() => {
                 const milestones = [...(item.milestones || []), { payment_date: '', amount: '', label: '' }]
-                const total = milestones.reduce((s, m) => s + (parseFloat(m.amount) || 0), 0)
-                onChange({ ...item, milestones, _milestone_total: total })
+                onChange({ ...item, milestones, _milestone_total: calcMilestoneTotal(milestones) })
               }}
               className="text-xs text-primary-600 hover:text-primary-700 font-medium"
             >
@@ -630,8 +647,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
                 value={m.amount ?? ''}
                 onChange={(v) => {
                   const milestones = (item.milestones || []).map((x, j) => j === mi ? { ...x, amount: v } : x)
-                  const total = milestones.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0)
-                  onChange({ ...item, milestones, _milestone_total: total })
+                  onChange({ ...item, milestones, _milestone_total: calcMilestoneTotal(milestones) })
                 }}
               />
               <Input
@@ -647,8 +663,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
                 type="button"
                 onClick={() => {
                   const milestones = (item.milestones || []).filter((_, j) => j !== mi)
-                  const total = milestones.reduce((s, x) => s + (parseFloat(x.amount) || 0), 0)
-                  onChange({ ...item, milestones, _milestone_total: total })
+                  onChange({ ...item, milestones, _milestone_total: calcMilestoneTotal(milestones) })
                 }}
                 className={`p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors ${mi === 0 ? 'self-end' : ''}`}
               >
@@ -657,32 +672,47 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
             </div>
           ))}
           {(item.milestones || []).length > 0 && (() => {
-            const rev = item._milestone_total || 0
+            const listRev = item._milestone_total || 0
+            const disc = parseFloat(item.discount_pct) || 0
+            const rev = item.annual_value || listRev
+            const hasDiscount = disc > 0 && listRev > 0
             const cogs = parseFloat(item.cogs_amount) || 0
-            const marginPct = rev > 0 ? (rev - cogs) / rev : null
+            const marginPct = getMarginPct(rev, cogs)
             const cols = isManager && !isTbn ? 'grid-cols-4' : 'grid-cols-3'
             return (
-              <div className={`bg-gray-50 rounded-lg p-3 grid gap-3 text-xs ${cols}`}>
-                <div>
-                  <p className="text-gray-500">COGS</p>
-                  <p className="font-medium text-navy-900 mt-0.5">{cogs > 0 ? fmt(cogs, 2) : '—'}</p>
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  <Input
+                    label="Discount %"
+                    type="number" min="0" max="100" step="0.1" suffix="%"
+                    value={item.discount_pct || ''}
+                    onChange={(e) => onChange({ ...item, discount_pct: parseFloat(e.target.value) || 0 })}
+                    className="w-36"
+                  />
                 </div>
-                <div>
-                  <p className="text-gray-500">Total Value</p>
-                  <p className="font-bold text-navy-900 mt-0.5">{fmt(rev, 2)}</p>
-                </div>
-                <div>
-                  <p className="text-gray-500">Margin</p>
-                  <p className={`font-bold mt-0.5 ${marginPct == null ? 'text-gray-400' : marginPct >= 0.30 ? 'text-green-600' : marginPct >= 0.15 ? 'text-yellow-600' : 'text-red-600'}`}>
-                    {marginPct != null ? `${(marginPct * 100).toFixed(1)}%` : '—'}
-                  </p>
-                </div>
-                {isManager && !isTbn && (
+                <div className={`bg-gray-50 rounded-lg p-3 grid gap-3 text-xs ${cols}`}>
                   <div>
-                    <p className="text-gray-500">Commission</p>
-                    <p className="font-bold text-primary-600 mt-0.5">{fmt(item.commission_amount || 0, 2)}</p>
+                    <p className="text-gray-500">COGS</p>
+                    <p className="font-medium text-navy-900 mt-0.5">{cogs > 0 ? fmt(cogs, 2) : '—'}</p>
                   </div>
-                )}
+                  <div>
+                    <p className="text-gray-500">Total Value</p>
+                    {hasDiscount && <p className="text-gray-400 line-through mt-0.5 text-[11px]">{fmt(listRev, 2)}</p>}
+                    <p className="font-bold text-navy-900 mt-0.5">{fmt(rev, 2)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Margin</p>
+                    <p className={`font-bold mt-0.5 ${marginPct == null ? 'text-gray-400' : marginPct >= 0.30 ? 'text-green-600' : marginPct >= 0.15 ? 'text-yellow-600' : 'text-red-600'}`}>
+                      {marginPct != null ? `${(marginPct * 100).toFixed(1)}%` : '—'}
+                    </p>
+                  </div>
+                  {isManager && !isTbn && (
+                    <div>
+                      <p className="text-gray-500">Commission</p>
+                      <p className="font-bold text-primary-600 mt-0.5">{fmt(item.commission_amount || 0, 2)}</p>
+                    </div>
+                  )}
+                </div>
               </div>
             )
           })()}
@@ -693,16 +723,27 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
         const rev = item.annual_value || 0
         const cogs = parseFloat(item.cogs_amount) || 0
         const marginPct = rev > 0 ? (rev - cogs) / rev : null
+        const disc = parseFloat(item.discount_pct) || 0
+        const listPrice = parseFloat(item.list_price) || 0
+        const hasDiscount = disc > 0 && listPrice > 0
         const cols = isManager && !isTbn ? 'grid-cols-4' : 'grid-cols-3'
         const valueLabel = product.billing_frequency === 'yearly' ? 'Annual Value' : product.billing_frequency === 'one_time' ? 'One-time Value' : 'Monthly Value'
         const totalLabel = product.billing_frequency === 'monthly' ? `Total (×${parseInt(item.billing_months) || contractMonths} mo)` : 'Total Value'
         return (
           <div className="space-y-3">
-            <CurrencyInput
-              label={valueLabel}
-              value={item.monthly_value || ''}
-              onChange={(v) => onChange({ ...item, monthly_value: parseFloat(v) || 0 })}
-            />
+            <div className="grid grid-cols-2 gap-3">
+              <CurrencyInput
+                label={valueLabel}
+                value={item.monthly_value || ''}
+                onChange={(v) => onChange({ ...item, monthly_value: parseFloat(v) || 0 })}
+              />
+              <Input
+                label="Discount %"
+                type="number" min="0" max="100" step="0.1" suffix="%"
+                value={item.discount_pct || ''}
+                onChange={(e) => onChange({ ...item, discount_pct: parseFloat(e.target.value) || 0 })}
+              />
+            </div>
             <div className={`bg-gray-50 rounded-lg p-3 grid gap-3 text-xs ${cols}`}>
               <div>
                 <p className="text-gray-500">COGS</p>
@@ -710,6 +751,7 @@ function ProductRow({ item, allItems, products, vendors, pricingMap, contractMon
               </div>
               <div>
                 <p className="text-gray-500">{totalLabel}</p>
+                {hasDiscount && <p className="text-gray-400 line-through mt-0.5 text-[11px]">{fmt(listPrice, 2)}</p>}
                 <p className="font-bold text-navy-900 mt-0.5">{fmt(rev, 2)}</p>
               </div>
               <div>
@@ -829,6 +871,10 @@ export default function NewDeal() {
       if (isEdit) {
         const { data: deal } = await supabase.from('deals').select('*').eq('id', editId).single()
         if (deal) {
+          // Contracted deals: pin to the locked rate so edits never overwrite snapshotted commission amounts
+          if (deal.stage === 'contracted' && deal.commission_locked_rate) {
+            setGlobalRate(parseFloat(deal.commission_locked_rate))
+          }
           setForm({
             name: deal.name || '',
             company_id: deal.company_id || (comps || []).find((c) => c.name.toLowerCase() === deal.company_name?.toLowerCase())?.id || (deal.company_name ? 'other' : ''),
@@ -870,7 +916,7 @@ export default function NewDeal() {
             _cogs_per_item: isQtyBased && qty > 0 ? (dp.cogs_amount || 0) / qty / months : (prod?.default_cogs || ''),
             _list_price_per_item: isQtyBased && qty > 0 ? (dp.list_price || 0) / qty / months : (prod?.default_list_price || ''),
             milestones: milestonesData.filter((m) => m.deal_product_id === dp.id),
-            _milestone_total: milestonesData.filter((m) => m.deal_product_id === dp.id).reduce((s, m) => s + (parseFloat(m.amount) || 0), 0),
+            _milestone_total: calcMilestoneTotal(milestonesData.filter((m) => m.deal_product_id === dp.id)),
             billing_start_date: dp.billing_start_date || '',
             billing_months: dp.billing_months || '',
             billing_mode: dp.billing_mode || 'monthly',
@@ -878,7 +924,7 @@ export default function NewDeal() {
             _trilogy_margin_pct: (() => {
               const u = parseFloat(dp.unit_price_snapshot) || 0
               const c = parseFloat(dp.cogs_per_unit_snapshot) || 0
-              if (u > 0 && c > 0 && u >= c) return parseFloat(((1 - c / u) * 100).toFixed(2))
+              if (u > 0 && c > 0 && u >= c) return parseFloat(calcMarginPctFromRate(c, u).toFixed(2))
               return ''
             })(),
           }
@@ -911,7 +957,7 @@ export default function NewDeal() {
   ).values()].sort((a, b) => a.name.localeCompare(b.name))
 
   const acv = parseFloat(form.acv) || 0
-  const totalCommission = dealProducts.reduce((s, dp) => s + (dp.commission_amount || 0), 0)
+  const totalCommission = calcTotalCommission(dealProducts)
   const totalAllocated = teamMembers.filter((m) => m.role === 'sales').reduce((s, m) => s + (m.commission_percent || 0), 0)
 
   // Base ACV = sum of product revenues (Trilogy's price before partner markup)
@@ -957,7 +1003,7 @@ export default function NewDeal() {
     if (form.contract_start && form.contract_end) {
       const start = new Date(form.contract_start)
       const end = new Date(form.contract_end)
-      const months = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth())
+      const months = calcMonthsBetweenDates(start, end)
       if (months > 0) setForm((f) => ({ ...f, contract_months: months }))
     }
   }, [form.contract_start, form.contract_end])
@@ -1068,7 +1114,13 @@ export default function NewDeal() {
     let dealId = editId
     if (isEdit) {
       await supabase.from('deals').update(dealData).eq('id', editId)
-      await supabase.from('deal_products').delete().eq('deal_id', editId)
+      // Leave cancelled products untouched — they're managed by the amendment workflow
+      const activeProductIds = dealProducts.filter((dp) => dp.status !== 'cancelled' && dp.id).map((dp) => dp.id)
+      if (activeProductIds.length > 0) {
+        await supabase.from('deal_products').delete().eq('deal_id', editId).in('id', activeProductIds)
+      } else {
+        await supabase.from('deal_products').delete().eq('deal_id', editId).neq('status', 'cancelled')
+      }
       await supabase.from('deal_team').delete().eq('deal_id', editId)
       await supabase.from('deal_partners').delete().eq('deal_id', editId)
     } else {
@@ -1084,7 +1136,8 @@ export default function NewDeal() {
     }
 
     // Insert products — strip local-only fields and existing id before re-inserting
-    const dpToInsert = dealProducts.filter((dp) => dp.product_id)
+    // Cancelled products are left untouched in the DB (managed by amendment workflow)
+    const dpToInsert = dealProducts.filter((dp) => dp.product_id && dp.status !== 'cancelled')
     const dpRows = dpToInsert.map(({ _id, _vendor_id, _margin_type, _margin_pct, _cogs_per_item, _list_price_per_item, _trilogy_margin_pct, id: _dbId, products: _, unit_price, cogs_per_unit, milestones: _milestones, _milestone_total, ...dp }) => {
       const row = { ...dp, deal_id: dealId }
       return Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v === '' ? null : v]))
@@ -1125,7 +1178,7 @@ export default function NewDeal() {
     const savedTotalCogs = dealProducts.reduce((s, dp) => s + (parseFloat(dp.cogs_amount) || 0), 0)
     const savedAcv = productBaseAcv > 0 ? productBaseAcv : (parseFloat(form.acv) || 0)
     if (savedTotalCogs > 0 && savedAcv > 0) {
-      const marginPct = (savedAcv - savedTotalCogs) / savedAcv
+      const marginPct = getMarginPct(savedAcv, savedTotalCogs)
       const tier = getMarginTier(savedAcv, savedTotalCogs)
       const approvalStatus = tier === 'green' ? 'auto_approved' : 'pending'
       await supabase.from('deal_approvals').upsert({
@@ -1252,7 +1305,62 @@ export default function NewDeal() {
               No products added. Click "Add Product" to get started.
             </div>
           )}
-          {dealProducts.map((item, i) => (
+          {dealProducts.map((item, i) => {
+            if (item.status === 'cancelled') {
+              const prod = products.find((p) => p.id === item.product_id)
+              const contractMonths = parseInt(form.contract_months) || 12
+              const activeMonths = item.billing_months ?? contractMonths
+              // total_revenue stores the full original contract value — prorate for what was actually billed
+              const fullAnnual = resolveProductValue(item)
+              const monthlyRate = contractMonths > 0 ? fullAnnual / contractMonths : 0
+              const paidAmount = fullAnnual * (activeMonths / contractMonths)
+              const cogs = effectiveCogs(item)
+              const fullCommission = item.commission_amount ?? 0
+              const earnedCommission = fullCommission * (activeMonths / contractMonths)
+              return (
+                <div key={item.id} className="border border-amber-200 bg-amber-50/40 rounded-xl px-4 py-4 flex items-start gap-3">
+                  <div className="mt-0.5 flex-shrink-0 w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center">
+                    <Lock size={12} className="text-amber-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    {/* Header */}
+                    <div className="flex items-center gap-2 flex-wrap mb-3">
+                      <span className="font-medium text-gray-400 line-through text-sm">{prod?.name || item.products?.name || 'Product'}</span>
+                      <span className="text-[11px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 font-medium">Cancelled</span>
+                    </div>
+                    {/* Contract details grid */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-2 text-xs mb-3">
+                      <div>
+                        <p className="text-gray-400 uppercase tracking-wide text-[10px] font-medium mb-0.5">Original Rate</p>
+                        <p className="text-gray-600 font-medium">{monthlyRate > 0 ? fmt(monthlyRate, 2) + '/mo' : '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-gray-400 uppercase tracking-wide text-[10px] font-medium mb-0.5">Full Contract</p>
+                        <p className="text-gray-600 font-medium">{fmt(fullAnnual, 2)} <span className="text-gray-400 font-normal">({contractMonths} mo)</span></p>
+                      </div>
+                      <div>
+                        <p className="text-gray-400 uppercase tracking-wide text-[10px] font-medium mb-0.5">Actually Billed</p>
+                        <p className="text-amber-700 font-semibold">{fmt(paidAmount, 2)} <span className="text-gray-400 font-normal">({activeMonths} mo)</span></p>
+                      </div>
+                      {cogs > 0 && (
+                        <div>
+                          <p className="text-gray-400 uppercase tracking-wide text-[10px] font-medium mb-0.5">Vendor Cost</p>
+                          <p className="text-gray-600 font-medium">{fmt(cogs, 2)} <span className="text-gray-400 font-normal">billed</span></p>
+                        </div>
+                      )}
+                      {isManager && fullCommission > 0 && (
+                        <div>
+                          <p className="text-gray-400 uppercase tracking-wide text-[10px] font-medium mb-0.5">Commission Earned</p>
+                          <p className="text-indigo-600 font-semibold">{fmt(earnedCommission, 2)} <span className="text-gray-400 font-normal line-through">{fmt(fullCommission, 2)}</span></p>
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-amber-600">Managed via Amendment — edit from the Deal Detail page</p>
+                  </div>
+                </div>
+              )
+            }
+            return (
             <ProductRow
               key={item.id || item._id}
               item={item}
@@ -1279,9 +1387,10 @@ export default function NewDeal() {
               isLast={i === dealProducts.length - 1}
               isManager={isManager}
               isTbn={form.is_tbn_property}
-              partnerMultiplier={productBaseAcv > 0 ? customerAcv / productBaseAcv : 1}
+              partnerMultiplier={customerAcv > 0 && productBaseAcv > 0 ? customerAcv / productBaseAcv : 1}
             />
-          ))}
+            )
+          })}
           <Button size="sm" variant="secondary" onClick={addProduct} icon={<Plus size={14} />}>Add Product</Button>
         </div>
       </Card>
@@ -1289,7 +1398,7 @@ export default function NewDeal() {
       {/* Pricing Breakdown */}
       {productBaseAcv > 0 && (() => {
         const marginTier = getMarginTier(productBaseAcv, totalVendorCost)
-        const marginPct = totalVendorCost > 0 ? (productBaseAcv - totalVendorCost) / productBaseAcv : null
+        const marginPct = totalVendorCost > 0 ? getMarginPct(productBaseAcv, totalVendorCost) : null
         const bannerStyles = {
           green: 'bg-green-50 border-green-200 text-green-800',
           yellow: 'bg-yellow-50 border-yellow-200 text-yellow-800',
@@ -1309,7 +1418,7 @@ export default function NewDeal() {
                   </div>
                   <div className="flex justify-between text-teal-700">
                     <span>+ Trilogy Margin</span>
-                    <span className="font-medium">+{fmt(productBaseAcv - totalVendorCost, 2)}</span>
+                    <span className="font-medium">+{fmt(calcTrilogyMargin(productBaseAcv, totalVendorCost), 2)}</span>
                   </div>
                   <div className="flex justify-between pt-1.5 border-t border-gray-200">
                     <span className="text-gray-600 font-medium">Trilogy ACV</span>

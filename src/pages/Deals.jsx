@@ -8,7 +8,9 @@ import Button from '../components/ui/Button'
 import SearchBar from '../components/ui/SearchBar'
 import EmptyState from '../components/ui/EmptyState'
 import { DEAL_STAGES } from '../lib/constants'
-import { fmt, getMarginTier } from '../lib/commission'
+import { fmt } from '../lib/commission'
+import { computeProductAcv } from '../lib/deals'
+import { getMarginTier, calcCogsFromMarginPct } from '../lib/margin'
 import { PageSpinner } from '../components/ui/Spinner'
 import { clsx } from 'clsx'
 import { format } from 'date-fns'
@@ -40,12 +42,15 @@ function DealCard({ deal, onClick }) {
         <ChevronRight size={14} className="text-gray-300 group-hover:text-primary-400 flex-shrink-0 mt-0.5 transition-colors" />
       </div>
       <p className="text-xs text-gray-500 mb-3 truncate">{deal.company_name}</p>
-      <div className="flex items-center justify-between">
+      <div className="flex items-end justify-between gap-2">
         <div>
           <p className="text-xs text-gray-400 leading-none mb-0.5">Est. Trilogy Margin</p>
           <span className="text-sm font-bold text-navy-900">{fmt(deal.acv, 2)}</span>
           {deal._actualAcv != null && (
             <p className="text-xs text-teal-600 font-medium mt-0.5">Actual ACV {fmt(deal._actualAcv, 2)}</p>
+          )}
+          {deal._proposedAcv != null && deal._proposedAcv > 0 && (
+            <p className="text-xs text-primary-500 font-medium mt-0.5">Proposed ACV {fmt(deal._proposedAcv, 2)}</p>
           )}
         </div>
         <span className="text-xs text-gray-400 self-start">{deal.deal_type || 'new'}</span>
@@ -131,7 +136,10 @@ function ListView({ deals, onDealClick, page, setPage }) {
                     {deal._actualAcv != null && (
                       <p className="font-semibold text-teal-600">{fmt(deal._actualAcv, 2)}</p>
                     )}
-                    {deal._actualAcv == null && (
+                    {deal._proposedAcv != null && deal._proposedAcv > 0 && (
+                      <p className="font-semibold text-primary-500">{fmt(deal._proposedAcv, 2)}</p>
+                    )}
+                    {deal._actualAcv == null && deal._proposedAcv == null && (
                       <p className="font-semibold text-navy-900">{fmt(deal.acv, 2)}</p>
                     )}
                   </td>
@@ -281,27 +289,29 @@ export default function Deals() {
     const { data: approvals } = await supabase.from('deal_approvals').select('deal_id, status, margin_pct')
     const approvalMap = Object.fromEntries((approvals || []).map((a) => [a.deal_id, a]))
 
-    // Fetch actual ACV from products for contracted deals
-    const contractedIds = (data || []).filter((d) => d.stage === 'contracted').map((d) => d.id)
-    let actualAcvMap = {}
-    if (contractedIds.length > 0) {
+    // Fetch computed ACV from products for contracted + proposal deals
+    const productDealIds = (data || []).filter((d) => d.stage === 'contracted' || d.stage === 'proposal').map((d) => d.id)
+    let computedAcvMap = {}
+    if (productDealIds.length > 0) {
       const { data: products } = await supabase
         .from('deal_products')
-        .select('deal_id, commission_metric, annual_value, yearly_cost, net_revenue, cogs_amount')
-        .in('deal_id', contractedIds)
+        .select('deal_id, commission_metric, annual_value, yearly_cost, net_revenue, cogs_amount, monthly_cost')
+        .in('deal_id', productDealIds)
+      const productsByDeal = {}
       ;(products || []).forEach((p) => {
-        const rev = p.commission_metric === 'GM'
-          ? (p.yearly_cost || ((p.net_revenue || 0) + (p.cogs_amount || 0)))
-          : (p.annual_value || 0)
-        actualAcvMap[p.deal_id] = (actualAcvMap[p.deal_id] || 0) + rev
+        if (!productsByDeal[p.deal_id]) productsByDeal[p.deal_id] = []
+        productsByDeal[p.deal_id].push(p)
+      })
+      productDealIds.forEach((dealId) => {
+        computedAcvMap[dealId] = computeProductAcv(productsByDeal[dealId] || [])
       })
     }
 
     const dealsWithTier = (data || []).map((d) => {
       const appr = approvalMap[d.id]
-      const tier = appr?.margin_pct != null ? getMarginTier(d.acv, d.acv * (1 - appr.margin_pct)) : null
-      const actualAcv = actualAcvMap[d.id] ?? null
-      return { ...d, _tier: tier, _approval: appr, _actualAcv: actualAcv }
+      const tier = appr?.margin_pct != null ? getMarginTier(d.acv, calcCogsFromMarginPct(d.acv, appr.margin_pct)) : null
+      const computedAcv = computedAcvMap[d.id] ?? null
+      return { ...d, _tier: tier, _approval: appr, _actualAcv: d.stage === 'contracted' ? computedAcv : null, _proposedAcv: d.stage === 'proposal' ? computedAcv : null }
     })
     setDeals(dealsWithTier)
     setLoading(false)
