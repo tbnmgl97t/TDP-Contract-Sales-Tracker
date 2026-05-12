@@ -1,12 +1,13 @@
 /**
  * Commission calculation engine for SalesFlow / Trilogy Digital.
  *
+ * Scope: commission rates, schedule building, SPIFs, and display formatting.
+ * Product math → products.js | Deal aggregation → deals.js | Margin → margin.js
+ *
  * Rules:
  * - NAVC/RAV products: commission = annual_value × base_rate
  * - GM products (JWX resell): commission = net_revenue × base_rate
- *   where net_revenue = (qty × unit_price × months) - (qty × cogs_per_unit × months)
- * - SPIFs are subtracted from the total commission pool (annual) and paid one-time
- *   in the quarter FOLLOWING contract execution. Net pool is split quarterly.
+ * - SPIFs paid in the contract execution quarter; net pool split quarterly.
  * - TBN properties are excluded from commissions.
  */
 
@@ -23,35 +24,13 @@ export function calcProductCommission(dp) {
 }
 
 /**
- * Calculate JWX/usage-based product values given the current pricing params.
- *
- * @param {number} monthlyQuantity - units per month (GB, hours, etc.)
- * @param {number} unitPrice       - revenue per unit (from product_pricing_params)
- * @param {number} cogsPerUnit     - COGS per unit (from product_pricing_params)
- * @param {number} contractMonths  - length of contract in months
- * @param {string} billingMode     - 'monthly' (qty×price×months) or 'fixed' (qty×price = total)
- * @returns {{ monthlyCost, totalRevenue, totalCogs, netRevenue }}
- */
-export function calcJwxValues(monthlyQuantity, unitPrice, cogsPerUnit, contractMonths, billingMode) {
-  const qty = monthlyQuantity || 0
-  const months = contractMonths || 12
-  if (billingMode === 'fixed') {
-    const totalRevenue = qty * (unitPrice || 0)
-    const totalCogs = qty * (cogsPerUnit || 0)
-    const monthlyCost = months > 0 ? totalRevenue / months : 0
-    const netRevenue = Math.max(0, totalRevenue - totalCogs)
-    return { monthlyCost, totalRevenue, totalCogs, netRevenue }
-  }
-  const monthlyCost = qty * (unitPrice || 0)
-  const totalRevenue = monthlyCost * months
-  const totalCogs = qty * (cogsPerUnit || 0) * months
-  const netRevenue = Math.max(0, totalRevenue - totalCogs)
-  return { monthlyCost, totalRevenue, totalCogs, netRevenue }
-}
-
-/**
  * Calculate SPIF for a support person based on deal ACV.
- * Tiers: acv_min (inclusive), acv_max (inclusive, null = unlimited).
+ *
+ * @param {number} acv        — deal ACV in dollars
+ * @param {array}  spifTiers  — [{ acv_min, acv_max, spif_amount }]
+ *                              acv_min/max are dollar amounts (inclusive);
+ *                              acv_max null means no upper bound.
+ * @returns {number} flat SPIF dollar amount (0 if no tier matches)
  */
 export function calcSpif(acv, spifTiers = []) {
   if (!acv || !spifTiers.length) return 0
@@ -218,14 +197,4 @@ export function fmtPct(value) {
   return `${(Number(value) * 100).toFixed(1)}%`
 }
 
-/**
- * Return margin tier: 'green' (≥30%), 'yellow' (15-29%), 'red' (<15%).
- * Pass acv (Trilogy ACV) and totalCogs. Returns null if no COGS data.
- */
-export function getMarginTier(acv, totalCogs) {
-  if (!acv || !totalCogs || totalCogs <= 0) return null
-  const pct = (acv - totalCogs) / acv
-  if (pct >= 0.30) return 'green'
-  if (pct >= 0.15) return 'yellow'
-  return 'red'
-}
+// getMarginTier and margin math have moved to src/lib/margin.js
