@@ -58,7 +58,7 @@ export default function Commission() {
           .filter((m) => m.deal_id === deal.id)
           .map((m) => ({ ...m, person_name: m.people?.name }))
         const entries = buildCommissionSchedule(deal, prods, team)
-        entries.forEach((e) => all.push({ ...e, deal_id: deal.id, deal_name: deal.name, company: deal.company_name }))
+        entries.forEach((e) => all.push({ ...e, deal_id: deal.id, deal_name: deal.name, company: deal.company_name, deal_stage: deal.stage }))
       })
     return all
   }, [deals, dealProducts, dealTeams])
@@ -71,23 +71,39 @@ export default function Commission() {
   const byPerson = useMemo(() => {
     const map = {}
     quarterEntries.forEach((e) => {
-      if (!map[e.person_id]) map[e.person_id] = { person_id: e.person_id, name: e.person_name, commission: 0, spif: 0, entries: [] }
-      if (e.type === 'commission') map[e.person_id].commission += e.amount
-      if (e.type === 'spif') map[e.person_id].spif += e.amount
+      if (!map[e.person_id]) map[e.person_id] = {
+        person_id: e.person_id, name: e.person_name,
+        commission: 0, spif: 0,
+        projectedCommission: 0, projectedSpif: 0,
+        entries: [],
+      }
+      const isContracted = e.deal_stage === 'contracted'
+      if (e.type === 'commission') {
+        if (isContracted) map[e.person_id].commission += e.amount
+        else map[e.person_id].projectedCommission += e.amount
+      }
+      if (e.type === 'spif') {
+        if (isContracted) map[e.person_id].spif += e.amount
+        else map[e.person_id].projectedSpif += e.amount
+      }
       map[e.person_id].entries.push(e)
     })
-    return Object.values(map).sort((a, b) => (b.commission + b.spif) - (a.commission + a.spif))
+    return Object.values(map).sort((a, b) =>
+      (b.commission + b.spif + b.projectedCommission + b.projectedSpif) -
+      (a.commission + a.spif + a.projectedCommission + a.projectedSpif)
+    )
   }, [quarterEntries])
 
   const totalCommission = byPerson.reduce((s, p) => s + p.commission, 0)
   const totalSpif = byPerson.reduce((s, p) => s + p.spif, 0)
+  const totalProjected = byPerson.reduce((s, p) => s + p.projectedCommission + p.projectedSpif, 0)
 
   const yearEntries = useMemo(() =>
     schedule.filter((e) => e.year === selectedYear),
     [schedule, selectedYear]
   )
-  const yearTotalCommission = yearEntries.filter((e) => e.type === 'commission').reduce((s, e) => s + e.amount, 0)
-  const yearTotalSpif = yearEntries.filter((e) => e.type === 'spif').reduce((s, e) => s + e.amount, 0)
+  const yearTotalCommission = yearEntries.filter((e) => e.type === 'commission' && e.deal_stage === 'contracted').reduce((s, e) => s + e.amount, 0)
+  const yearTotalSpif = yearEntries.filter((e) => e.type === 'spif' && e.deal_stage === 'contracted').reduce((s, e) => s + e.amount, 0)
 
   const years = Array.from({ length: 3 }, (_, i) => CURRENT_YEAR - 1 + i)
 
@@ -105,9 +121,10 @@ export default function Commission() {
       ])
     })
     rows.push([])
-    rows.push(['', '', '', '', '', 'Total Commission', totalCommission.toFixed(2)])
-    rows.push(['', '', '', '', '', 'Total SPIFs', totalSpif.toFixed(2)])
-    rows.push(['', '', '', '', '', 'Total Payout', (totalCommission + totalSpif).toFixed(2)])
+    rows.push(['', '', '', '', '', 'Total Commission (contracted)', totalCommission.toFixed(2)])
+    rows.push(['', '', '', '', '', 'Total SPIFs (contracted)', totalSpif.toFixed(2)])
+    rows.push(['', '', '', '', '', 'Total Payout (contracted)', (totalCommission + totalSpif).toFixed(2)])
+    if (totalProjected > 0) rows.push(['', '', '', '', '', 'Total Projected (pipeline)', totalProjected.toFixed(2)])
 
     const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
@@ -131,7 +148,7 @@ export default function Commission() {
     <div className="space-y-5">
       <div>
         <h2 className="text-xl font-bold text-navy-900">Commission Dashboard</h2>
-        <p className="text-sm text-gray-500 mt-0.5">Quarterly commission breakdown based on contracted deals.</p>
+        <p className="text-sm text-gray-500 mt-0.5">Quarterly commission breakdown — contracted deals + active pipeline.</p>
       </div>
 
       {/* Quarter selector */}
@@ -176,17 +193,17 @@ export default function Commission() {
         <Card>
           <p className="text-xs text-gray-500 mb-1">Total Commission</p>
           <p className="text-2xl font-bold text-navy-900">{fmt(totalCommission, 2)}</p>
-          <p className="text-xs text-gray-400 mt-1">Q{selectedQ} only</p>
+          <p className="text-xs text-gray-400 mt-1">Contracted · Q{selectedQ}</p>
         </Card>
         <Card>
           <p className="text-xs text-gray-500 mb-1">Total SPIFs</p>
           <p className="text-2xl font-bold text-accent-500">{fmt(totalSpif, 2)}</p>
-          <p className="text-xs text-gray-400 mt-1">Q{selectedQ} only</p>
+          <p className="text-xs text-gray-400 mt-1">Contracted · Q{selectedQ}</p>
         </Card>
         <Card>
           <p className="text-xs text-gray-500 mb-1">Q{selectedQ} Payout</p>
           <p className="text-2xl font-bold text-primary-500">{fmt(totalCommission + totalSpif, 2)}</p>
-          <p className="text-xs text-gray-400 mt-1">Commission + SPIFs</p>
+          {totalProjected > 0 && <p className="text-xs text-amber-500 mt-1">+{fmt(totalProjected, 2)} projected</p>}
         </Card>
         <Card className="border-2 border-primary-100">
           <p className="text-xs text-primary-600 font-medium mb-1">{selectedYear} Full Year</p>
@@ -201,17 +218,18 @@ export default function Commission() {
           <div className="text-center py-10">
             <DollarSign size={40} className="text-gray-200 mx-auto mb-3" />
             <p className="text-sm font-medium text-gray-500">No commission data for {selectedYear} Q{selectedQ}</p>
-            <p className="text-xs text-gray-400 mt-1">Commission is calculated for contracted deals only.</p>
+            <p className="text-xs text-gray-400 mt-1">Includes contracted deals and active pipeline (proposal & negotiation).</p>
           </div>
         </Card>
       ) : (
         <div className="space-y-4">
           {byPerson.map((person) => {
-            const total = person.commission + person.spif
+            const contractedTotal = person.commission + person.spif
+            const projectedTotal = person.projectedCommission + person.projectedSpif
             const dealBreakdown = {}
             person.entries.forEach((e) => {
               const key = e.deal_id
-              if (!dealBreakdown[key]) dealBreakdown[key] = { deal_id: e.deal_id, deal_name: e.deal_name, company: e.company, commission: 0, spif: 0 }
+              if (!dealBreakdown[key]) dealBreakdown[key] = { deal_id: e.deal_id, deal_name: e.deal_name, company: e.company, deal_stage: e.deal_stage, commission: 0, spif: 0 }
               if (e.type === 'commission') dealBreakdown[key].commission += e.amount
               if (e.type === 'spif') dealBreakdown[key].spif += e.amount
             })
@@ -230,27 +248,40 @@ export default function Commission() {
                       </div>
                     </div>
                   </div>
-                  <p className="text-xl font-bold text-navy-900">{fmt(total, 2)}</p>
+                  <div className="text-right">
+                    <p className="text-xl font-bold text-navy-900">{fmt(contractedTotal, 2)}</p>
+                    {projectedTotal > 0 && (
+                      <p className="text-xs text-amber-500 mt-0.5">+{fmt(projectedTotal, 2)} projected</p>
+                    )}
+                  </div>
                 </div>
 
                 {/* Deal breakdown */}
                 <div className="border-t border-gray-100 pt-3 space-y-2">
-                  {Object.values(dealBreakdown).map((db) => (
-                    <button
-                      key={db.deal_id}
-                      onClick={() => navigate(`/deals/${db.deal_id}`)}
-                      className="w-full flex items-center justify-between py-2 text-sm hover:bg-gray-50 rounded-lg px-2 -mx-2 transition-colors"
-                    >
-                      <div className="text-left">
-                        <p className="font-medium text-navy-900">{db.deal_name}</p>
-                        <p className="text-xs text-gray-400">{db.company}</p>
-                      </div>
-                      <div className="flex gap-3 items-center">
-                        {db.commission > 0 && <span className="text-primary-600 font-medium">{fmt(db.commission, 2)}</span>}
-                        {db.spif > 0 && <span className="text-accent-600 font-medium">+{fmt(db.spif, 2)} SPIF</span>}
-                      </div>
-                    </button>
-                  ))}
+                  {Object.values(dealBreakdown).map((db) => {
+                    const isProjected = db.deal_stage !== 'contracted'
+                    return (
+                      <button
+                        key={db.deal_id}
+                        onClick={() => navigate(`/deals/${db.deal_id}`)}
+                        className="w-full flex items-center justify-between py-2 text-sm hover:bg-gray-50 rounded-lg px-2 -mx-2 transition-colors"
+                      >
+                        <div className="text-left">
+                          <div className="flex items-center gap-1.5">
+                            <p className="font-medium text-navy-900">{db.deal_name}</p>
+                            {isProjected && (
+                              <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-amber-50 text-amber-600 border border-amber-200">projected</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-400">{db.company}</p>
+                        </div>
+                        <div className="flex gap-3 items-center">
+                          {db.commission > 0 && <span className={`font-medium ${isProjected ? 'text-amber-600' : 'text-primary-600'}`}>{fmt(db.commission, 2)}</span>}
+                          {db.spif > 0 && <span className="text-accent-600 font-medium">+{fmt(db.spif, 2)} SPIF</span>}
+                        </div>
+                      </button>
+                    )
+                  })}
                 </div>
               </Card>
             )
