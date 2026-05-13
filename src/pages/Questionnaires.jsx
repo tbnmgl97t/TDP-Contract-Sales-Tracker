@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
-import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import {
   Plus, Copy, Check, X, Pencil, Archive, Trash2, ChevronUp, ChevronDown,
-  ClipboardList, BookOpen, Layers,
+  ClipboardList, BookOpen, Layers, Settings2,
 } from 'lucide-react'
 import { format, addDays } from 'date-fns'
 import { supabase } from '../lib/supabase'
@@ -13,6 +12,8 @@ import Button from '../components/ui/Button'
 import Input, { Select } from '../components/ui/Input'
 import { PageSpinner } from '../components/ui/Spinner'
 import { Badge } from '../components/ui/Badge'
+import RichTextEditor from '../components/ui/RichTextEditor'
+import ConfirmDialog from '../components/ui/ConfirmDialog'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -486,6 +487,11 @@ function QuestionSetsTab() {
   const [editingId, setEditingId] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [expandedSets, setExpandedSets] = useState({})
+
+  function toggleExpanded(id) {
+    setExpandedSets(prev => ({ ...prev, [id]: !prev[id] }))
+  }
 
   async function load() {
     setLoading(true)
@@ -575,15 +581,34 @@ function QuestionSetsTab() {
                     {set.description && (
                       <p className="text-xs text-gray-500 mt-0.5">{set.description}</p>
                     )}
-                    {qNames.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {qNames.slice(0, 5).map((name, i) => (
-                          <span key={i} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full truncate max-w-[200px]">
-                            {name}
-                          </span>
-                        ))}
-                        {qNames.length > 5 && (
-                          <span className="text-xs text-gray-400 self-center">+{qNames.length - 5} more</span>
+                    {sortedSQ.length > 0 && (
+                      <div className="mt-3">
+                        <div className="rounded-lg border border-gray-100 divide-y divide-gray-50 overflow-hidden">
+                          {(expandedSets[set.id] ? sortedSQ : sortedSQ.slice(0, 5)).map((sq, i) => {
+                            const q = sq.questionnaire_questions
+                            if (!q) return null
+                            const isLong = q.type === 'long'
+                            return (
+                              <div key={sq.id} className="flex items-start gap-3 px-3 py-2.5 bg-white">
+                                <span className="text-xs text-gray-400 mt-0.5 w-5 text-right flex-shrink-0 font-medium">{i + 1}.</span>
+                                <span className="text-sm text-gray-700 flex-1 leading-snug">{q.text}</span>
+                                <span className={`text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0 ${isLong ? 'bg-purple-50 text-purple-700' : 'bg-blue-50 text-blue-700'}`}>
+                                  {isLong ? 'Long' : 'Short'}
+                                </span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                        {sortedSQ.length > 5 && (
+                          <button
+                            onClick={() => toggleExpanded(set.id)}
+                            className="mt-1.5 text-xs text-primary-500 hover:text-primary-600 font-medium flex items-center gap-1"
+                          >
+                            {expandedSets[set.id]
+                              ? <><ChevronUp size={12} /> Show less</>
+                              : <><ChevronDown size={12} /> Show {sortedSQ.length - 5} more questions</>
+                            }
+                          </button>
                         )}
                       </div>
                     )}
@@ -614,22 +639,14 @@ function QuestionSetsTab() {
         </div>
       )}
 
-      {/* Inline confirmation dialog */}
-      {confirmDelete && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-          <Card className="w-full max-w-sm mx-4">
-            <h3 className="text-base font-semibold text-navy-900 mb-2">Delete set?</h3>
-            <p className="text-sm text-gray-500 mb-4">
-              <span className="font-medium text-navy-800">{confirmDelete.name}</span> will be permanently deleted. This does not affect existing questionnaires.
-            </p>
-            <div className="flex gap-2 justify-end">
-              <Button variant="secondary" size="sm" onClick={() => setConfirmDelete(null)}>Cancel</Button>
-              <Button variant="danger" size="sm" loading={deleting} onClick={() => handleDelete(confirmDelete)}>Delete</Button>
-            </div>
-          </Card>
-        </div>,
-        document.body
-      )}
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={() => handleDelete(confirmDelete)}
+        loading={deleting}
+        title="Delete set?"
+        message={confirmDelete ? `"${confirmDelete.name}" will be permanently deleted. This does not affect existing questionnaires.` : ''}
+      />
     </div>
   )
 }
@@ -643,6 +660,65 @@ const TABS = [
   { key: 'library', label: 'Question Library', icon: BookOpen },
   { key: 'sets', label: 'Question Sets', icon: Layers },
 ]
+
+// ---------------------------------------------------------------------------
+// Default Intro Text settings card
+// ---------------------------------------------------------------------------
+
+function DefaultIntroCard() {
+  const [introText, setIntroText] = useState('')
+  const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    supabase
+      .from('questionnaire_defaults')
+      .select('intro_text')
+      .eq('id', 1)
+      .maybeSingle()
+      .then(({ data }) => {
+        setIntroText(data?.intro_text || '')
+        setLoading(false)
+      })
+  }, [])
+
+  async function handleSave() {
+    setSaving(true)
+    await supabase
+      .from('questionnaire_defaults')
+      .upsert({ id: 1, intro_text: introText, updated_at: new Date().toISOString() })
+    setSaving(false)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2500)
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="Default Intro Text"
+        subtitle="Shown at the top of every new questionnaire sent to customers"
+        icon={<Settings2 size={16} className="text-gray-400" />}
+      />
+      <div className="space-y-3">
+        {loading ? (
+          <div className="h-32 rounded-lg bg-gray-50 border border-gray-100 animate-pulse" />
+        ) : (
+          <RichTextEditor
+            value={introText}
+            onChange={setIntroText}
+            placeholder="Write the default intro message customers will see at the top of every questionnaire…"
+          />
+        )}
+        <div className="flex justify-end">
+          <Button onClick={handleSave} loading={saving} disabled={saving}>
+            {saved ? 'Saved!' : 'Save'}
+          </Button>
+        </div>
+      </div>
+    </Card>
+  )
+}
 
 export default function Questionnaires() {
   const { isManager, loading: userLoading } = useUser()
@@ -696,6 +772,9 @@ export default function Questionnaires() {
       {activeTab === 'questionnaires' && <QuestionnairesTab />}
       {activeTab === 'library' && <QuestionLibraryTab />}
       {activeTab === 'sets' && <QuestionSetsTab />}
+
+      {/* Default intro text — always visible */}
+      <DefaultIntroCard />
     </div>
   )
 }
