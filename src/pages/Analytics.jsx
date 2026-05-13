@@ -19,7 +19,6 @@ export default function Analytics() {
       .is('deleted_at', null)
       .then(({ data, error }) => {
         if (error) {
-          // Fallback if deleted_at column doesn't exist yet
           return supabase.from('deals').select('id, name, company_name, stage, acv, deal_type, created_at')
             .then(({ data: fallback }) => { setDeals(fallback || []); setLoading(false) })
         }
@@ -224,6 +223,7 @@ export default function Analytics() {
           </div>
         )}
       </Card>
+
     </div>
   )
 }

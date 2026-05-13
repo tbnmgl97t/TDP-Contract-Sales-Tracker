@@ -1,6 +1,7 @@
-import { Menu, Bell, Plus } from 'lucide-react'
+import { Menu, Plus } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import Button from '../ui/Button'
+import NotificationBell from './NotificationBell'
 
 export default function Header({ onMenuClick, title }) {
   const navigate = useNavigate()
@@ -18,6 +19,7 @@ export default function Header({ onMenuClick, title }) {
         )}
       </div>
       <div className="flex items-center gap-2">
+        <NotificationBell />
         <Button
           size="sm"
           onClick={() => navigate('/deals/new')}

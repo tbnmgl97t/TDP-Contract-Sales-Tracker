@@ -27,6 +27,7 @@ import AmendmentHistoryCard from '../components/deal/AmendmentHistoryCard'
 import CommissionScheduleCard from '../components/deal/CommissionScheduleCard'
 import DealContractsCard from '../components/deal/DealContractsCard'
 import ActivityLogCard from '../components/deal/ActivityLogCard'
+import DealNotesCard from '../components/deal/DealNotesCard'
 import ContractAnalysisCards from '../components/deal/ContractAnalysisCards'
 import DealBrainPanel from '../components/deal/DealBrainPanel'
 
@@ -373,6 +374,9 @@ export default function DealDetail() {
         logEvent={logEvent}
         onAnalyzePdf={(contract) => brainPanelRef.current?.openPanel(contract)}
       />
+
+      {/* Notes & Actions */}
+      <DealNotesCard dealId={id} />
 
       {/* Activity Log */}
       <ActivityLogCard auditLog={auditLog} dealTeam={dealTeam} dealProducts={dealProducts} />

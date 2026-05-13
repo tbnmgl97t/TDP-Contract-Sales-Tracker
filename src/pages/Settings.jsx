@@ -1,11 +1,75 @@
 import { useState, useEffect } from 'react'
-import { Sparkles } from 'lucide-react'
+import { Sparkles, Bell } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import Card, { CardHeader } from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import CommissionRateCard from '../components/settings/CommissionRateCard'
 import CommissionRulesCard from '../components/settings/CommissionRulesCard'
 import ProposalSlides from './ProposalSlides'
+
+const REMINDER_OPTIONS = [
+  { days: 7, label: '7 days before' },
+  { days: 3, label: '3 days before' },
+  { days: 1, label: '1 day before'  },
+  { days: 0, label: 'Day of'        },
+]
+
+function ReminderSettingsCard() {
+  const [selected, setSelected] = useState([3, 1, 0])
+  const [saving, setSaving]     = useState(false)
+  const [saved, setSaved]       = useState(false)
+
+  useEffect(() => {
+    supabase.from('reminder_settings').select('reminder_days').eq('id', 1).single()
+      .then(({ data }) => { if (data?.reminder_days) setSelected(data.reminder_days) })
+  }, [])
+
+  function toggle(days) {
+    setSelected((prev) =>
+      prev.includes(days) ? prev.filter((d) => d !== days) : [...prev, days]
+    )
+    setSaved(false)
+  }
+
+  async function save() {
+    setSaving(true)
+    await supabase.from('reminder_settings').upsert({ id: 1, reminder_days: selected, updated_at: new Date().toISOString() })
+    setSaving(false)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title={<span className="flex items-center gap-2"><Bell size={15} className="text-primary-400" />Action Reminders</span>}
+        subtitle="Choose when to send email + in-app reminders for deal actions"
+      />
+      <div className="space-y-2.5 mb-4">
+        {REMINDER_OPTIONS.map(({ days, label }) => (
+          <label key={days} className="flex items-center gap-3 cursor-pointer group">
+            <input
+              type="checkbox"
+              checked={selected.includes(days)}
+              onChange={() => toggle(days)}
+              className="w-4 h-4 rounded accent-primary-500 cursor-pointer"
+            />
+            <span className="text-sm text-navy-900 group-hover:text-primary-600 transition-colors">{label}</span>
+          </label>
+        ))}
+      </div>
+      <div className="flex items-center gap-3">
+        <Button size="sm" loading={saving} onClick={save}>
+          Save
+        </Button>
+        {saved && <span className="text-xs text-primary-500 font-medium">Saved ✓</span>}
+      </div>
+      <p className="text-xs text-gray-400 mt-3">
+        Reminders fire daily at 8:00 AM UTC. Recipients are all members of the deal team.
+      </p>
+    </Card>
+  )
+}
 
 const INPUT_COST_PER_M = 3.0
 const OUTPUT_COST_PER_M = 15.0
@@ -89,6 +153,8 @@ export default function Settings() {
         />
         {showSlides && <ProposalSlides />}
       </Card>
+
+      <ReminderSettingsCard />
 
       <CommissionRulesCard />
     </div>

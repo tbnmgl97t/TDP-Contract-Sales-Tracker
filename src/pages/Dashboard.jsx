@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { differenceInDays, parseISO, format } from 'date-fns'
 import { TrendingUp, Handshake, DollarSign, Users, ArrowRight, Landmark } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import Card, { CardHeader } from '../components/ui/Card'
@@ -10,6 +11,8 @@ import { calcTotalCommission, calcTotalSpif, calcTotalPayout, calcTrilogyNet } f
 import { PageSpinner } from '../components/ui/Spinner'
 import { useUser } from '../contexts/UserContext'
 import EstimatorModal from '../components/EstimatorModal'
+
+const RENEWAL_WINDOW_DAYS = 90
 
 const LATE_STAGES = ['proposal', 'negotiation', 'contracted']
 
@@ -54,13 +57,13 @@ export default function Dashboard() {
     async function load() {
       let { data, error: err } = await supabase
         .from('deals')
-        .select('id, name, company_name, stage, acv, total_contract_value, created_at')
+        .select('id, name, company_name, stage, acv, total_contract_value, created_at, contract_end')
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
       if (err) {
         const { data: fallback, error: err2 } = await supabase
           .from('deals')
-          .select('id, name, company_name, stage, acv, total_contract_value, created_at')
+          .select('id, name, company_name, stage, acv, total_contract_value, created_at, contract_end')
           .order('created_at', { ascending: false })
         if (err2) { setError('Failed to load dashboard data. Please refresh.'); setLoading(false); return }
         data = fallback
@@ -120,6 +123,15 @@ export default function Dashboard() {
     }
     load()
   }, [isManager])
+
+  const upcomingRenewals = useMemo(() => {
+    const today = new Date()
+    return deals
+      .filter((d) => d.stage === 'contracted' && d.contract_end)
+      .map((d) => ({ ...d, daysLeft: differenceInDays(parseISO(d.contract_end), today) }))
+      .filter((d) => d.daysLeft >= 0 && d.daysLeft <= RENEWAL_WINDOW_DAYS)
+      .sort((a, b) => a.daysLeft - b.daysLeft)
+  }, [deals])
 
   if (loading) return <PageSpinner />
   if (error) return (
@@ -189,6 +201,41 @@ export default function Dashboard() {
           })}
         </div>
       </Card>
+
+      {/* Upcoming renewals */}
+      {upcomingRenewals.length > 0 && (
+        <Card>
+          <CardHeader title="Upcoming Renewals" subtitle={`${upcomingRenewals.length} contract${upcomingRenewals.length !== 1 ? 's' : ''} expiring within ${RENEWAL_WINDOW_DAYS} days`} />
+          <div className="divide-y divide-gray-50">
+            {upcomingRenewals.map((d) => {
+              const urgent = d.daysLeft <= 30
+              const soon   = d.daysLeft <= 60
+              const dotColor  = urgent ? 'bg-red-400'    : soon ? 'bg-amber-400'    : 'bg-green-400'
+              const badgeCls  = urgent ? 'bg-red-50 text-red-600' : soon ? 'bg-amber-50 text-amber-600' : 'bg-green-50 text-green-600'
+              return (
+                <button
+                  key={d.id}
+                  onClick={() => navigate(`/deals/${d.id}`)}
+                  className="w-full flex items-center gap-3 py-3 -mx-4 px-4 hover:bg-gray-50 transition-colors text-left"
+                >
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-navy-900 truncate">{d.name}</p>
+                    <p className="text-xs text-gray-400 truncate">{d.company_name}</p>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-sm font-bold text-navy-900">{fmt(d.acv, 0)}<span className="text-xs font-normal text-gray-400"> /yr</span></p>
+                    <p className="text-xs text-gray-400">{format(parseISO(d.contract_end), 'MMM d, yyyy')}</p>
+                  </div>
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${badgeCls}`}>
+                    {d.daysLeft === 0 ? 'Today' : `${d.daysLeft}d`}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </Card>
+      )}
 
       {/* Recent deals */}
       <Card>
