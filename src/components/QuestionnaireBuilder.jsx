@@ -46,6 +46,7 @@ export default function QuestionnaireBuilder({ deal, onCreated, onClose }) {
   // ── Step 1: Details fields ────────────────────────────────────────────────
   const [title, setTitle] = useState(`Discovery Questionnaire — ${deal.name}`)
   const [introText, setIntroText] = useState('')
+  const [defaultIntroText, setDefaultIntroText] = useState('')
   const [expiresIn, setExpiresIn] = useState(30)
   const [reminderDays, setReminderDays] = useState(3)
 
@@ -53,6 +54,7 @@ export default function QuestionnaireBuilder({ deal, onCreated, onClose }) {
   const [selectedSetId, setSelectedSetId] = useState('')
   const [setPreview, setSetPreview] = useState([])   // questions in the chosen set
   const [formItems, setFormItems] = useState([])     // { _key, question_id, source_set_id, question_text, question_type, question_help_text }
+  const [setAdded, setSetAdded] = useState(false)
 
   // Inline new-question mini-form
   const [showNewQ, setShowNewQ] = useState(false)
@@ -75,24 +77,21 @@ export default function QuestionnaireBuilder({ deal, onCreated, onClose }) {
   const [created, setCreated] = useState(null)   // { id, token, title }
   const [copied, setCopied] = useState(false)
 
-  // ── Load sets + questions on mount ────────────────────────────────────────
+  // ── Load sets + questions + global intro default on mount ─────────────────
   useEffect(() => {
     let cancelled = false
     async function load() {
-      const [setsRes, questionsRes] = await Promise.all([
-        supabase
-          .from('questionnaire_sets')
-          .select('id, name, description')
-          .order('name'),
-        supabase
-          .from('questionnaire_questions')
-          .select('id, text, type, help_text')
-          .eq('is_archived', false)
-          .order('text'),
+      const [setsRes, questionsRes, defaultRes] = await Promise.all([
+        supabase.from('questionnaire_sets').select('id, name, description').order('name'),
+        supabase.from('questionnaire_questions').select('id, text, type, help_text').eq('is_archived', false).order('text'),
+        supabase.from('questionnaire_defaults').select('intro_text').eq('id', 1).maybeSingle(),
       ])
       if (cancelled) return
       setSets(setsRes.data || [])
       setLibrary(questionsRes.data || [])
+      const intro = defaultRes.data?.intro_text || ''
+      setDefaultIntroText(intro)
+      setIntroText(intro)
       setLoading(false)
     }
     load()
@@ -125,6 +124,15 @@ export default function QuestionnaireBuilder({ deal, onCreated, onClose }) {
   function handleAddSet() {
     if (!selectedSetId || setPreview.length === 0) return
     const set = sets.find((s) => s.id === selectedSetId)
+    const sectionHeader = {
+      _key: `section-${selectedSetId}-${Date.now()}`,
+      question_id: null,
+      source_set_id: null,
+      source_set_name: '',
+      question_text: set?.name || 'Question Set',
+      question_type: 'section',
+      question_help_text: '',
+    }
     const newItems = setPreview.map((q) => ({
       _key: `${q.id}-${selectedSetId}-${Date.now()}-${Math.random()}`,
       question_id: q.id,
@@ -134,7 +142,9 @@ export default function QuestionnaireBuilder({ deal, onCreated, onClose }) {
       question_type: q.type,
       question_help_text: q.help_text || '',
     }))
-    setFormItems((prev) => [...prev, ...newItems])
+    setFormItems((prev) => [...prev, sectionHeader, ...newItems])
+    setSetAdded(true)
+    setTimeout(() => setSetAdded(false), 2000)
   }
 
   // ── Toggle library question ───────────────────────────────────────────────
@@ -240,6 +250,13 @@ export default function QuestionnaireBuilder({ deal, onCreated, onClose }) {
 
   function removeItem(index) {
     setFormItems((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function toggleItemType(index) {
+    setFormItems((prev) => prev.map((item, i) => {
+      if (i !== index) return item
+      return { ...item, question_type: item.question_type === 'short' ? 'long' : 'short' }
+    }))
   }
 
   // ── Save questionnaire ────────────────────────────────────────────────────
@@ -444,16 +461,23 @@ export default function QuestionnaireBuilder({ deal, onCreated, onClose }) {
                   />
 
                   <div className="flex flex-col gap-1">
-                    <label className="text-sm font-medium text-navy-900">
-                      Intro text <span className="text-gray-400 font-normal">(optional)</span>
-                    </label>
-                    <textarea
-                      className="w-full rounded-lg border border-gray-200 bg-white text-sm text-navy-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent px-3 py-2.5 resize-none"
-                      rows={3}
-                      placeholder="A short message shown at the top of the form your customer sees…"
-                      value={introText}
-                      onChange={(e) => setIntroText(e.target.value)}
-                    />
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-medium text-navy-900">Intro text</label>
+                      <span className="text-xs text-gray-400">Edit from the Questionnaires page</span>
+                    </div>
+                    {defaultIntroText ? (
+                      <div
+                        className="w-full rounded-lg border border-gray-100 bg-gray-50 text-sm text-gray-500 px-3 py-2.5 leading-relaxed
+                          [&_p]:my-1 [&_ul]:my-1.5 [&_ul]:pl-5 [&_ul]:list-disc
+                          [&_ol]:my-1.5 [&_ol]:pl-5 [&_ol]:list-decimal
+                          [&_li]:my-0.5 [&_strong]:font-semibold [&_strong]:text-gray-600"
+                        dangerouslySetInnerHTML={{ __html: defaultIntroText }}
+                      />
+                    ) : (
+                      <div className="w-full rounded-lg border border-dashed border-gray-200 bg-gray-50 text-sm text-gray-400 px-3 py-4 text-center italic">
+                        No default intro text set. Add one from the Questionnaires page.
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
@@ -513,12 +537,12 @@ export default function QuestionnaireBuilder({ deal, onCreated, onClose }) {
                         </select>
                       </div>
                       <Button
-                        variant="secondary"
+                        variant={setAdded ? 'primary' : 'secondary'}
                         size="sm"
                         disabled={!selectedSetId || setPreview.length === 0}
                         onClick={handleAddSet}
                       >
-                        Add Set
+                        {setAdded ? '✓ Added' : 'Add Set'}
                       </Button>
                     </div>
 
@@ -795,6 +819,18 @@ export default function QuestionnaireBuilder({ deal, onCreated, onClose }) {
 
                         {/* Controls */}
                         <div className="flex items-center gap-0.5 flex-shrink-0">
+                          {!isHeader && (
+                            <button
+                              onClick={() => toggleItemType(idx)}
+                              className="text-xs px-1.5 py-0.5 rounded border mr-1 transition-colors font-medium"
+                              style={item.question_type === 'long'
+                                ? { color: '#7c3aed', background: '#f5f3ff', borderColor: '#ddd6fe' }
+                                : { color: '#1d4ed8', background: '#eff6ff', borderColor: '#bfdbfe' }}
+                              title="Toggle short / long answer"
+                            >
+                              {item.question_type === 'long' ? 'Long' : 'Short'}
+                            </button>
+                          )}
                           <button
                             onClick={() => moveItem(idx, -1)}
                             disabled={idx === 0}

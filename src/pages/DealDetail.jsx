@@ -21,6 +21,7 @@ import AmendDealModal from '../components/AmendDealModal'
 import EditAmendmentModal from '../components/EditAmendmentModal'
 import ProposalBuilder from '../components/ProposalBuilder'
 import QuestionnaireBuilder from '../components/QuestionnaireBuilder'
+import QuestionnaireResponsesDrawer from '../components/QuestionnaireResponsesDrawer'
 import { format } from 'date-fns'
 import ReactMarkdown from 'react-markdown'
 
@@ -128,6 +129,11 @@ export default function DealDetail() {
   const [copyTargetId, setCopyTargetId] = useState('')  // target deal id
   const [copyDeals, setCopyDeals] = useState([])        // deals for picker
   const [copyingQSaving, setCopyingQSaving] = useState(false)
+  const [editingQItems, setEditingQItems] = useState(null)   // { q, items: [{id, question_text, question_type}] }
+  const [editingQSaving, setEditingQSaving] = useState(false)
+  const [viewingResponses, setViewingResponses] = useState(null)  // questionnaire object
+  const [deleteQDlg, setDeleteQDlg] = useState(null)              // questionnaire to delete
+  const [copiedLinkId, setCopiedLinkId] = useState(null)          // questionnaire id whose link was just copied
   const [amendments, setAmendments] = useState([])
   const [allProducts, setAllProducts] = useState([])
   const [globalRate, setGlobalRate] = useState(0.07)
@@ -254,11 +260,17 @@ export default function DealDetail() {
 
       const { data: { user } } = await supabase.auth.getUser()
 
+      const targetDeal = copyDeals.find((d) => d.id === copyTargetId)
+      const targetName = targetDeal?.name || targetDeal?.company_name || ''
+      const newTitle = targetName
+        ? copyingQ.title.replace(/—\s*.+$/, `— ${targetName}`)
+        : copyingQ.title
+
       const { data: newQ, error } = await supabase
         .from('questionnaires')
         .insert({
           deal_id: copyTargetId,
-          title: copyingQ.title,
+          title: newTitle,
           intro_text: copyingQ.intro_text || null,
           expires_at: expiresAt.toISOString(),
           reminder_days: copyingQ.reminder_days || 3,
@@ -295,6 +307,32 @@ export default function DealDetail() {
       console.error(e)
     } finally {
       setCopyingQSaving(false)
+    }
+  }
+
+  async function openEditItems(q) {
+    const { data: items } = await supabase
+      .from('questionnaire_items')
+      .select('id, question_text, question_type, question_help_text, sort_order')
+      .eq('questionnaire_id', q.id)
+      .order('sort_order')
+    setEditingQItems({ q, items: items || [] })
+  }
+
+  async function handleSaveEditedItems() {
+    if (!editingQItems) return
+    setEditingQSaving(true)
+    try {
+      await Promise.all(
+        editingQItems.items.map((item) =>
+          supabase.from('questionnaire_items').update({ question_type: item.question_type }).eq('id', item.id)
+        )
+      )
+      setEditingQItems(null)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setEditingQSaving(false)
     }
   }
 
@@ -812,6 +850,126 @@ export default function DealDetail() {
         </Card>}
       </div>
 
+      {/* Questionnaires */}
+      {isManager && (
+        <Card>
+          <CardHeader
+            title="Questionnaires"
+            subtitle="Customer discovery forms"
+            action={
+              <Button variant="secondary" size="sm" onClick={() => setShowQuestionnaireBuilder(true)} icon={<FileText size={13} />}>
+                New
+              </Button>
+            }
+          />
+          {questionnaires.length === 0 ? (
+            <div className="py-6 text-center">
+              <p className="text-sm text-gray-400">No questionnaires yet.</p>
+              <button onClick={() => setShowQuestionnaireBuilder(true)} className="text-xs text-primary-500 hover:underline mt-1">Create one</button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {questionnaires.map((q) => {
+                const statusColor = { active: 'green', submitted: 'blue', expired: 'gray', deactivated: 'gray' }[q.status] || 'gray'
+                const answerCount = q._answerCount || 0
+                const itemCount = q.questionnaire_items?.[0]?.count ?? 0
+                const questionCount = typeof itemCount === 'string' ? parseInt(itemCount, 10) : (itemCount || 0)
+                const publicUrl = `${window.location.origin}/q/${q.token}`
+                const hasActivity = answerCount > 0 || q.submitted_at != null || q.status === 'submitted'
+                const canDelete = !hasActivity
+                const isDeactivated = q.status === 'deactivated'
+                return (
+                  <div key={q.id} className={`flex items-center justify-between p-3 border rounded-xl hover:bg-gray-50 ${isDeactivated ? 'border-gray-100 opacity-60' : 'border-gray-100'}`}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className={`text-sm font-medium truncate ${isDeactivated ? 'text-gray-400 line-through' : 'text-navy-900'}`}>{q.title}</p>
+                        <Badge color={statusColor}>{q.status.charAt(0).toUpperCase() + q.status.slice(1)}</Badge>
+                      </div>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {questionCount} question{questionCount !== 1 ? 's' : ''}
+                        {answerCount > 0
+                          ? <span className={answerCount >= questionCount ? ' · text-primary-500 font-medium' : ''}>
+                              {` · ${answerCount} / ${questionCount} answered`}
+                            </span>
+                          : ' · No responses yet'
+                        }
+                        {q.status === 'active' && ` · Expires ${format(new Date(q.expires_at), 'MMM d, yyyy')}`}
+                        {q.submitted_at && ` · Submitted ${format(new Date(q.submitted_at), 'MMM d, yyyy')}`}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                      {/* View responses */}
+                      {hasActivity && (
+                        <button
+                          onClick={() => setViewingResponses(q)}
+                          className="p-1.5 text-gray-400 hover:text-primary-500 hover:bg-primary-50 rounded-lg transition-colors"
+                          title="View responses"
+                        >
+                          <Eye size={14} />
+                        </button>
+                      )}
+                      {/* Copy link */}
+                      {q.status === 'active' && (
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(publicUrl)
+                            setCopiedLinkId(q.id)
+                            setTimeout(() => setCopiedLinkId(null), 2000)
+                          }}
+                          className={`p-1.5 rounded-lg transition-colors ${copiedLinkId === q.id ? 'text-primary-500 bg-primary-50' : 'text-gray-400 hover:text-primary-500 hover:bg-primary-50'}`}
+                          title={copiedLinkId === q.id ? 'Copied!' : 'Copy shareable link'}
+                        >
+                          {copiedLinkId === q.id ? <Check size={14} /> : <Copy size={14} />}
+                        </button>
+                      )}
+                      {/* Edit question types */}
+                      <button
+                        onClick={() => openEditItems(q)}
+                        className="p-1.5 text-gray-400 hover:text-navy-900 hover:bg-gray-100 rounded-lg transition-colors"
+                        title="Edit questions"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      {/* Copy to another deal */}
+                      <button
+                        onClick={() => openCopyModal(q)}
+                        className="p-1.5 text-gray-400 hover:text-indigo-500 hover:bg-indigo-50 rounded-lg transition-colors"
+                        title="Copy to another deal"
+                      >
+                        <LayoutTemplate size={14} />
+                      </button>
+                      {/* Deactivate — kills the public link, preserves responses */}
+                      {(q.status === 'active' || q.status === 'expired') && (
+                        <button
+                          onClick={async () => {
+                            await supabase.from('questionnaires').update({ status: 'deactivated' }).eq('id', q.id)
+                            setQuestionnaires(prev => prev.map(qi => qi.id === q.id ? { ...qi, status: 'deactivated' } : qi))
+                          }}
+                          className="p-1.5 text-gray-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors"
+                          title="Deactivate (disables public link, keeps responses)"
+                        >
+                          <AlertTriangle size={14} />
+                        </button>
+                      )}
+                      {/* Delete — only when no responses exist */}
+                      {canDelete && (
+                        <button
+                          onClick={() => setDeleteQDlg(q)}
+                          className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Delete (no responses — safe to remove)"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </Card>
+      )}
+
       {/* Products */}
       <Card>
         <CardHeader title="Products & Services" />
@@ -1134,118 +1292,6 @@ export default function DealDetail() {
       </Card>
       </div>
 
-      {/* Questionnaires */}
-      {isManager && (
-        <Card>
-          <CardHeader
-            title="Questionnaires"
-            subtitle="Customer discovery forms"
-            action={
-              <Button variant="secondary" size="sm" onClick={() => setShowQuestionnaireBuilder(true)} icon={<FileText size={13} />}>
-                New
-              </Button>
-            }
-          />
-          {questionnaires.length === 0 ? (
-            <div className="py-6 text-center">
-              <p className="text-sm text-gray-400">No questionnaires yet.</p>
-              <button onClick={() => setShowQuestionnaireBuilder(true)} className="text-xs text-primary-500 hover:underline mt-1">Create one</button>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {questionnaires.map((q) => {
-                const statusColor = { active: 'green', submitted: 'blue', expired: 'gray', deactivated: 'gray' }[q.status] || 'gray'
-                const answerCount = q._answerCount || 0
-                const itemCount = q.questionnaire_items?.[0]?.count ?? 0
-                const questionCount = typeof itemCount === 'string' ? parseInt(itemCount, 10) : (itemCount || 0)
-                const publicUrl = `${window.location.origin}/q/${q.token}`
-                const hasActivity = answerCount > 0 || q.submitted_at != null || q.status === 'submitted'
-                const canDelete = !hasActivity
-                const isDeactivated = q.status === 'deactivated'
-                return (
-                  <div key={q.id} className={`flex items-center justify-between p-3 border rounded-xl hover:bg-gray-50 ${isDeactivated ? 'border-gray-100 opacity-60' : 'border-gray-100'}`}>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className={`text-sm font-medium truncate ${isDeactivated ? 'text-gray-400 line-through' : 'text-navy-900'}`}>{q.title}</p>
-                        <Badge color={statusColor}>{q.status.charAt(0).toUpperCase() + q.status.slice(1)}</Badge>
-                      </div>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {questionCount} question{questionCount !== 1 ? 's' : ''}
-                        {answerCount > 0
-                          ? <span className={answerCount >= questionCount ? ' · text-primary-500 font-medium' : ''}>
-                              {` · ${answerCount} / ${questionCount} answered`}
-                            </span>
-                          : ' · No responses yet'
-                        }
-                        {q.status === 'active' && ` · Expires ${format(new Date(q.expires_at), 'MMM d, yyyy')}`}
-                        {q.submitted_at && ` · Submitted ${format(new Date(q.submitted_at), 'MMM d, yyyy')}`}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1 ml-2 flex-shrink-0">
-                      {/* View responses */}
-                      {hasActivity && (
-                        <button
-                          onClick={() => window.open(publicUrl, '_blank')}
-                          className="p-1.5 text-gray-400 hover:text-primary-500 hover:bg-primary-50 rounded-lg transition-colors"
-                          title="View responses"
-                        >
-                          <Eye size={14} />
-                        </button>
-                      )}
-                      {/* Copy link */}
-                      {q.status === 'active' && (
-                        <button
-                          onClick={() => navigator.clipboard.writeText(publicUrl)}
-                          className="p-1.5 text-gray-400 hover:text-primary-500 hover:bg-primary-50 rounded-lg transition-colors"
-                          title="Copy shareable link"
-                        >
-                          <Copy size={14} />
-                        </button>
-                      )}
-                      {/* Copy to another deal */}
-                      <button
-                        onClick={() => openCopyModal(q)}
-                        className="p-1.5 text-gray-400 hover:text-indigo-500 hover:bg-indigo-50 rounded-lg transition-colors"
-                        title="Copy to another deal"
-                      >
-                        <LayoutTemplate size={14} />
-                      </button>
-                      {/* Deactivate — kills the public link, preserves responses */}
-                      {(q.status === 'active' || q.status === 'expired') && (
-                        <button
-                          onClick={async () => {
-                            await supabase.from('questionnaires').update({ status: 'deactivated' }).eq('id', q.id)
-                            setQuestionnaires(prev => prev.map(qi => qi.id === q.id ? { ...qi, status: 'deactivated' } : qi))
-                          }}
-                          className="p-1.5 text-gray-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors"
-                          title="Deactivate (disables public link, keeps responses)"
-                        >
-                          <AlertTriangle size={14} />
-                        </button>
-                      )}
-                      {/* Delete — only when no responses exist */}
-                      {canDelete && (
-                        <button
-                          onClick={async () => {
-                            if (!window.confirm(`Delete "${q.title}"? This cannot be undone.`)) return
-                            await supabase.from('questionnaires').delete().eq('id', q.id)
-                            setQuestionnaires(prev => prev.filter(qi => qi.id !== q.id))
-                          }}
-                          className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Delete (no responses — safe to remove)"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </Card>
-      )}
-
       {/* Activity Log */}
       {auditLog.length > 0 && (() => {
         const people = dealTeam.map((m) => ({ id: m.person_id, name: m.people?.name })).filter((p) => p.name)
@@ -1531,6 +1577,20 @@ export default function DealDetail() {
         />
       )}
 
+      {/* Questionnaire responses drawer */}
+      {viewingResponses && (
+        <QuestionnaireResponsesDrawer
+          questionnaire={viewingResponses}
+          onClose={() => setViewingResponses(null)}
+          onReopened={() => {
+            setViewingResponses(null)
+            setQuestionnaires((prev) => prev.map((q) =>
+              q.id === viewingResponses.id ? { ...q, status: 'active', submitted_at: null } : q
+            ))
+          }}
+        />
+      )}
+
       {/* Copy questionnaire to another deal */}
       <Modal
         open={!!copyingQ}
@@ -1575,6 +1635,63 @@ export default function DealDetail() {
           </div>
         </div>
       </Modal>
+      {/* Edit questionnaire items (toggle short/long) */}
+      <Modal
+        open={!!editingQItems}
+        onClose={() => setEditingQItems(null)}
+        title="Edit questions"
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setEditingQItems(null)}>Cancel</Button>
+            <Button onClick={handleSaveEditedItems} loading={editingQSaving} disabled={editingQSaving}>Save changes</Button>
+          </>
+        }
+      >
+        {editingQItems && (
+          <div className="space-y-1">
+            <p className="text-xs text-gray-400 mb-3">Click the type badge on any question to toggle between Short and Long answer.</p>
+            {editingQItems.items.map((item, idx) => {
+              const isHeader = item.question_type === 'section' || item.question_type === 'subsection'
+              return (
+                <div key={item.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg ${isHeader ? 'bg-gray-50' : 'hover:bg-gray-50'}`}>
+                  <span className="text-xs text-gray-400 w-4 text-right flex-shrink-0">{isHeader ? '§' : `${idx + 1}.`}</span>
+                  <span className="text-sm text-gray-800 flex-1">{item.question_text}</span>
+                  {!isHeader && (
+                    <button
+                      onClick={() => setEditingQItems((prev) => ({
+                        ...prev,
+                        items: prev.items.map((it, i) => i === idx
+                          ? { ...it, question_type: it.question_type === 'short' ? 'long' : 'short' }
+                          : it
+                        ),
+                      }))}
+                      className="text-xs px-2 py-0.5 rounded border font-medium transition-colors flex-shrink-0"
+                      style={item.question_type === 'long'
+                        ? { color: '#7c3aed', background: '#f5f3ff', borderColor: '#ddd6fe' }
+                        : { color: '#1d4ed8', background: '#eff6ff', borderColor: '#bfdbfe' }}
+                    >
+                      {item.question_type === 'long' ? 'Long' : 'Short'}
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Modal>
+
+      <ConfirmDialog
+        open={!!deleteQDlg}
+        onClose={() => setDeleteQDlg(null)}
+        onConfirm={async () => {
+          await supabase.from('questionnaires').delete().eq('id', deleteQDlg.id)
+          setQuestionnaires(prev => prev.filter(qi => qi.id !== deleteQDlg.id))
+          setDeleteQDlg(null)
+        }}
+        title="Delete Questionnaire"
+        message={`"${deleteQDlg?.title}" has no responses and will be permanently deleted.`}
+      />
       <ConfirmDialog
         open={deleteDlg}
         onClose={() => setDeleteDlg(false)}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import RichTextEditor from '../components/ui/RichTextEditor'
 
 // ─── Utility ────────────────────────────────────────────────────────────────
 
@@ -447,9 +448,22 @@ export default function QuestionnairePublic() {
             </h1>
 
             {questionnaire.intro_text && (
-              <p className="mt-3 text-sm text-gray-500 leading-relaxed whitespace-pre-wrap">
-                {questionnaire.intro_text}
-              </p>
+              (() => {
+                const isHtml = /<[a-z][\s\S]*>/i.test(questionnaire.intro_text)
+                return isHtml ? (
+                  <div
+                    className="mt-3 text-sm text-gray-500 leading-relaxed
+                      [&_p]:my-1.5 [&_ul]:my-2 [&_ul]:pl-5 [&_ul]:list-disc
+                      [&_ol]:my-2 [&_ol]:pl-5 [&_ol]:list-decimal
+                      [&_li]:my-1 [&_strong]:font-semibold [&_strong]:text-gray-700"
+                    dangerouslySetInnerHTML={{ __html: questionnaire.intro_text }}
+                  />
+                ) : (
+                  <p className="mt-3 text-sm text-gray-500 leading-relaxed whitespace-pre-wrap">
+                    {questionnaire.intro_text}
+                  </p>
+                )
+              })()
             )}
 
             {/* Meta row */}
@@ -536,12 +550,10 @@ export default function QuestionnairePublic() {
                     {!item.question_help_text && <div className="mb-3" />}
 
                     {item.question_type === 'long' ? (
-                      <textarea
-                        rows={5}
+                      <RichTextEditor
                         value={localAnswers[item.id] ?? ''}
-                        onChange={(e) => handleAnswerChange(item.id, e.target.value)}
+                        onChange={(html) => handleAnswerChange(item.id, html)}
                         placeholder="Your answer…"
-                        className="w-full rounded-lg border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-300 focus:border-transparent resize-none"
                       />
                     ) : (
                       <input
