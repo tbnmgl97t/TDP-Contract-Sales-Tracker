@@ -326,6 +326,9 @@ export default function DealDetail() {
         )}
       </div>
 
+      {/* Notes & Actions */}
+      <DealNotesCard dealId={id} />
+
       {/* Questionnaires */}
       <DealQuestionnairesCard
         questionnaires={questionnaires}
@@ -374,9 +377,6 @@ export default function DealDetail() {
         logEvent={logEvent}
         onAnalyzePdf={(contract) => brainPanelRef.current?.openPanel(contract)}
       />
-
-      {/* Notes & Actions */}
-      <DealNotesCard dealId={id} />
 
       {/* Activity Log */}
       <ActivityLogCard auditLog={auditLog} dealTeam={dealTeam} dealProducts={dealProducts} />
