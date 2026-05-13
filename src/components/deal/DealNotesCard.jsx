@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { useUser } from '../../contexts/UserContext'
 import Card, { CardHeader } from '../ui/Card'
 import Button from '../ui/Button'
+import RichTextEditor from '../ui/RichTextEditor'
 
 const NOTE_TYPES = [
   { key: 'note',    label: 'Note',    icon: MessageSquare, color: 'text-blue-500',   bg: 'bg-blue-50'   },
@@ -51,7 +52,8 @@ export default function DealNotesCard({ dealId }) {
   useEffect(() => { load() }, [dealId])
 
   async function handleSave() {
-    if (!content.trim()) return
+    const stripped = content.replace(/<[^>]*>/g, '').trim()
+    if (!stripped) return
     setSaving(true)
     try {
       const { data: note } = await supabase.from('deal_notes').insert({
@@ -130,12 +132,10 @@ export default function DealNotesCard({ dealId }) {
           </div>
 
           {/* Content */}
-          <textarea
+          <RichTextEditor
             value={content}
-            onChange={(e) => setContent(e.target.value)}
+            onChange={setContent}
             placeholder="What happened? What did you discuss?"
-            rows={3}
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent"
           />
 
           {/* Action toggle */}
@@ -169,7 +169,7 @@ export default function DealNotesCard({ dealId }) {
             <Button variant="secondary" size="sm" onClick={() => { setShowForm(false); setContent(''); setAddAction(false) }}>
               Cancel
             </Button>
-            <Button size="sm" loading={saving} onClick={handleSave} disabled={!content.trim()}>
+            <Button size="sm" loading={saving} onClick={handleSave} disabled={!content.replace(/<[^>]*>/g, '').trim()}>
               Save
             </Button>
           </div>
@@ -212,7 +212,10 @@ export default function DealNotesCard({ dealId }) {
               <div key={note.id} className={`flex gap-3 py-3 ${i < notes.length - 1 ? 'border-b border-gray-50' : ''}`}>
                 <NoteTypeIcon type={note.note_type} />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-navy-900 whitespace-pre-wrap">{note.content}</p>
+                  <div
+                    className="prose prose-sm max-w-none text-navy-900 [&_ul]:pl-5 [&_ul]:list-disc [&_ol]:pl-5 [&_ol]:list-decimal [&_p]:my-0.5 [&_li]:my-0"
+                    dangerouslySetInnerHTML={{ __html: note.content }}
+                  />
                   {linkedAction && (
                     <div className="flex items-center gap-1.5 mt-1.5">
                       <button
