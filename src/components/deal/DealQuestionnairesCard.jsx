@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Eye, Copy, Check, Pencil, LayoutTemplate, Trash2, AlertTriangle, FileText } from 'lucide-react'
 import { format } from 'date-fns'
 import { supabase } from '../../lib/supabase'
@@ -29,6 +29,24 @@ export default function DealQuestionnairesCard({
   const [viewingResponses, setViewingResponses] = useState(null)
   const [deleteQDlg, setDeleteQDlg] = useState(null)
   const [copiedLinkId, setCopiedLinkId] = useState(null)
+  const [eventsMap, setEventsMap] = useState({})  // questionnaire_id → latest event types
+
+  useEffect(() => {
+    if (!questionnaires.length) return
+    supabase
+      .from('questionnaire_events')
+      .select('questionnaire_id, event_type, created_at')
+      .in('questionnaire_id', questionnaires.map((q) => q.id))
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        const map = {}
+        ;(data || []).forEach((e) => {
+          if (!map[e.questionnaire_id]) map[e.questionnaire_id] = new Set()
+          map[e.questionnaire_id].add(e.event_type)
+        })
+        setEventsMap(map)
+      })
+  }, [questionnaires])
 
   async function openCopyModal(q) {
     setCopyingQ(q)
@@ -181,6 +199,29 @@ export default function DealQuestionnairesCard({
                       {q.status === 'active' && ` · Expires ${format(new Date(q.expires_at), 'MMM d, yyyy')}`}
                       {q.submitted_at && ` · Submitted ${format(new Date(q.submitted_at), 'MMM d, yyyy')}`}
                     </p>
+                    {/* Engagement trail */}
+                    {q.status !== 'submitted' && q.status !== 'deactivated' && eventsMap[q.id] && (
+                      <div className="flex items-center gap-2 mt-1.5">
+                        {eventsMap[q.id].has('viewed') && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
+                            <span className="w-1.5 h-1.5 rounded-full bg-gray-400 inline-block" />
+                            Viewed
+                          </span>
+                        )}
+                        {eventsMap[q.id].has('activity_started') && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-600">
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block" />
+                            In progress
+                          </span>
+                        )}
+                        {eventsMap[q.id].has('reminder_sent') && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-600">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+                            Reminder sent
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-1 ml-2 flex-shrink-0">
                     {hasActivity && (
