@@ -95,14 +95,24 @@ export default function Sidebar({ open, onClose }) {
       >
         {/* Logo */}
         <div className="flex items-center justify-between px-5 py-5 border-b border-navy-700">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-tdp-gradient flex items-center justify-center flex-shrink-0">
-              <span className="text-white font-bold text-sm">SF</span>
-            </div>
-            <div>
-              <div className="text-white font-semibold text-sm leading-tight">SalesFlow</div>
-              <div className="text-navy-300 text-xs">Trilogy Digital</div>
-            </div>
+          <div>
+            <span style={{
+              fontFamily: "'Poppins', 'Helvetica Neue', Arial, sans-serif",
+              fontWeight: 900,
+              letterSpacing: '-0.04em',
+              fontSize: '20px',
+              lineHeight: 1,
+              background: 'linear-gradient(95deg, #6FD4AC 0%, #DBED68 100%)',
+              WebkitBackgroundClip: 'text',
+              backgroundClip: 'text',
+              color: 'transparent',
+              display: 'block',
+            }}>
+              SalesFlow
+            </span>
+            <span className="text-navy-400 text-[10px] tracking-widest uppercase font-medium mt-0.5 block">
+              Trilogy Digital
+            </span>
           </div>
           <button onClick={onClose} className="lg:hidden text-navy-400 hover:text-white">
             <X size={18} />

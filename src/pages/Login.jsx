@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
+import SalesFlowLogo from '../components/ui/SalesFlowLogo'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -22,12 +23,9 @@ export default function Login() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         {/* Logo */}
-        <div className="flex flex-col items-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-tdp-gradient flex items-center justify-center mb-3 shadow-lg">
-            <span className="text-white font-bold text-xl">SF</span>
-          </div>
-          <h1 className="text-2xl font-bold text-navy-900">SalesFlow</h1>
-          <p className="text-sm text-gray-500 mt-1">Trilogy Digital — Sign in to continue</p>
+        <div className="mb-8">
+          <SalesFlowLogo variant="light" subtitle={true} />
+          <p className="text-sm text-gray-400 mt-3 text-center">Sign in to continue</p>
         </div>
 
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
