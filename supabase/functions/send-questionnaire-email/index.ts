@@ -2,9 +2,11 @@ import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!
-const FROM_EMAIL    = Deno.env.get('FROM_EMAIL')    ?? 'noreply@trilogydigital.com'
-const NOTIFY_EMAIL  = Deno.env.get('NOTIFY_EMAIL')  ?? 'info@trilogydigital.com'
-const APP_URL       = Deno.env.get('APP_URL')       ?? 'https://salesflow.trilogydigital.com'
+const FROM_EMAIL    = Deno.env.get('FROM_EMAIL')    ?? 'noreply@notify.trilogydigital.com'
+const APP_URL       = Deno.env.get('APP_URL')       ?? 'https://salesflow.trilogyapps.com'
+
+// Events that get in-app notifications (viewed is excluded — too noisy)
+const NOTIFY_IN_APP = new Set(['activity_started', 'submitted', 'reminder_sent'])
 
 function emailShell(body: string) {
   return `<!DOCTYPE html>
@@ -49,15 +51,16 @@ serve(async (req) => {
 
     const { data: q } = await supabase
       .from('questionnaires')
-      .select('*, deals(name, company_name)')
+      .select('*, deals(id, name, company_name)')
       .eq('id', questionnaire_id)
       .single()
 
     if (!q) return new Response('Not found', { status: 404 })
 
-    const dealName  = q.deals?.name || q.deals?.company_name || 'Unknown Deal'
-    const formUrl   = `${APP_URL}/q/${q.token}`
-    const dealUrl   = `${APP_URL}/deals/${q.deal_id}`
+    const dealName = q.deals?.name || q.deals?.company_name || 'Unknown Deal'
+    const dealId   = q.deals?.id
+    const formUrl  = `${APP_URL}/q/${q.token}`
+    const dealUrl  = `${APP_URL}/deals/${dealId}`
 
     type EventType = 'viewed' | 'activity_started' | 'submitted' | 'reminder_sent'
 
@@ -95,24 +98,61 @@ serve(async (req) => {
     const template = templates[event_type as EventType]
     if (!template) return new Response('Unknown event type', { status: 400 })
 
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
-      },
-      body: JSON.stringify({
-        from: FROM_EMAIL,
-        to:   NOTIFY_EMAIL,
-        subject: template.subject,
-        html: emailShell(template.body),
-      }),
-    })
+    // Resolve deal team member emails
+    const { data: team } = await supabase
+      .from('deal_team')
+      .select('people ( email, name )')
+      .eq('deal_id', dealId)
 
-    const data = await res.json()
-    return new Response(JSON.stringify(data), {
+    const recipients: { email: string; name: string }[] = (team ?? [])
+      .map((t: { people: { email: string; name: string } | null }) => t.people)
+      .filter(Boolean)
+      .filter((p: { email: string }) => p.email)
+
+    const errors: string[] = []
+    let totalSent = 0
+
+    // Send email to each team member
+    for (const recipient of recipients) {
+      try {
+        const res = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${RESEND_API_KEY}`,
+          },
+          body: JSON.stringify({
+            from:    FROM_EMAIL,
+            to:      recipient.email,
+            subject: template.subject,
+            html:    emailShell(template.body),
+          }),
+        })
+        if (!res.ok) {
+          const err = await res.text()
+          errors.push(`Resend error for ${recipient.email}: ${err}`)
+        } else {
+          totalSent++
+        }
+      } catch (e) {
+        errors.push(`Email send failed: ${(e as Error).message}`)
+      }
+
+      // Write in-app notification (skip for 'viewed')
+      if (NOTIFY_IN_APP.has(event_type) && dealId) {
+        await supabase.from('notifications').insert({
+          user_email: recipient.email,
+          type:       `questionnaire_${event_type}`,
+          title:      template.subject,
+          body:       `${dealName} — ${q.title}`,
+          deal_id:    dealId,
+        })
+      }
+    }
+
+    return new Response(JSON.stringify({ sent: totalSent, errors: errors.length ? errors : undefined }), {
       headers: { 'Content-Type': 'application/json' },
-      status: res.ok ? 200 : 500,
+      status: 200,
     })
   } catch (err) {
     return new Response(JSON.stringify({ error: (err as Error).message }), { status: 500 })
