@@ -24,6 +24,14 @@ export default function DealProductsTable({ dealProducts, amendments, deal, cust
   }
 
   const contractMonths = deal.contract_months || 12
+  const cancelledPaidTotal = dealProducts
+    .filter((dp) => dp.status === 'cancelled')
+    .reduce((sum, dp) => {
+      const lineTotal = productLineTotal(dp, partnerMultiplier)
+      const activeMonths = dp.billing_months ?? contractMonths
+      return sum + lineTotal * (activeMonths / contractMonths)
+    }, 0)
+  const annualInvestmentTotal = customerAcv + cancelledPaidTotal
 
   return (
     <div className="overflow-x-auto">
@@ -111,7 +119,7 @@ export default function DealProductsTable({ dealProducts, amendments, deal, cust
           })}
           <tr className="border-t-2 border-gray-200">
             <td colSpan={5} className="py-2 font-semibold text-navy-900 text-sm">Annual Investment</td>
-            <td className="py-2 text-right font-bold text-navy-900 hidden md:table-cell">{fmt(customerAcv, 2)}</td>
+            <td className="py-2 text-right font-bold text-navy-900 hidden md:table-cell">{fmt(annualInvestmentTotal, 2)}</td>
           </tr>
         </tbody>
       </table>

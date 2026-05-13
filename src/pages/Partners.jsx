@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Plus, Pencil, Trash2, Handshake } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { useUser } from '../contexts/UserContext'
 import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import SearchBar from '../components/ui/SearchBar'
@@ -87,6 +88,7 @@ function PartnerForm({ initial, vendors, onSave, onClose }) {
 }
 
 export default function Partners() {
+  const { isManager } = useUser()
   const [partners, setPartners] = useState([])
   const [vendors, setVendors] = useState([])
   const [loading, setLoading] = useState(true)
@@ -125,7 +127,7 @@ export default function Partners() {
     <div className="space-y-4">
       <div className="flex gap-3">
         <SearchBar value={search} onChange={setSearch} placeholder="Search partners..." className="flex-1" />
-        <Button onClick={() => setModal({})} icon={<Plus size={15} />}>Add Partner</Button>
+        {isManager && <Button onClick={() => setModal({})} icon={<Plus size={15} />}>Add Partner</Button>}
       </div>
 
       <Card padding={false}>
@@ -143,9 +145,9 @@ export default function Partners() {
                 <tr className="border-b border-gray-100">
                   <th className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wide">Partner</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wide hidden sm:table-cell">Linked Vendor</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wide">Default %</th>
+                  {isManager && <th className="text-right px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wide">Default %</th>}
                   <th className="text-right px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wide">Status</th>
-                  <th className="px-4 py-3"></th>
+                  {isManager && <th className="px-4 py-3"></th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -158,22 +160,26 @@ export default function Partners() {
                     <td className="px-4 py-3.5 hidden sm:table-cell text-gray-600">
                       {p.vendors?.name || <span className="text-gray-400">—</span>}
                     </td>
-                    <td className="px-4 py-3.5 text-right font-semibold text-navy-900">
-                      {p.default_commission_pct}%
-                    </td>
+                    {isManager && (
+                      <td className="px-4 py-3.5 text-right font-semibold text-navy-900">
+                        {p.default_commission_pct}%
+                      </td>
+                    )}
                     <td className="px-4 py-3.5 text-right">
                       <Badge color={p.active ? 'green' : 'gray'}>{p.active ? 'Active' : 'Inactive'}</Badge>
                     </td>
-                    <td className="px-4 py-3.5">
-                      <div className="flex justify-end gap-1">
-                        <button onClick={() => setModal(p)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-navy-900 transition-colors">
-                          <Pencil size={14} />
-                        </button>
-                        <button onClick={() => setDeleteItem(p)} className="p-1.5 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-600 transition-colors">
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
+                    {isManager && (
+                      <td className="px-4 py-3.5">
+                        <div className="flex justify-end gap-1">
+                          <button onClick={() => setModal(p)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-navy-900 transition-colors">
+                            <Pencil size={14} />
+                          </button>
+                          <button onClick={() => setDeleteItem(p)} className="p-1.5 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-600 transition-colors">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

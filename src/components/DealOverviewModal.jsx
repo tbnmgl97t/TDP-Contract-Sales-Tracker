@@ -20,7 +20,7 @@ import { effectiveCogs, productLineTotal, resolveMonthlyValue, resolveProductVal
 import { getMarginTier, calcMargin } from '../lib/margin'
 import { StageBadge } from './ui/Badge'
 
-export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPartners, approval, amendments = [], onClose, isManager }) {
+export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPartners, approval, amendments = [], onClose, isManager, profile }) {
   const printRef = useRef(null)
 
   // Active products only for ACV / margin / commission totals
@@ -106,6 +106,7 @@ export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPa
               supportTeam={supportTeam}
               quarterGroups={quarterGroups}
               isManager={isManager}
+              profile={profile}
               approval={approval}
             />
           </div>
@@ -140,6 +141,7 @@ export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPa
           supportTeam={supportTeam}
           quarterGroups={quarterGroups}
           isManager={isManager}
+          profile={profile}
           approval={approval}
           printMode
         />
@@ -149,8 +151,25 @@ export default function DealOverviewModal({ deal, dealProducts, dealTeam, dealPa
   )
 }
 
-function OverviewContent({ deal, dealProducts, activeProducts, amendments, totalCogs, totalCommission, baseAcv, partnerStack, customerAcv, partnerMultiplier, salesTeam, supportTeam, quarterGroups, isManager, printMode, approval }) {
+function OverviewContent({ deal, dealProducts, activeProducts, amendments, totalCogs, totalCommission, baseAcv, partnerStack, customerAcv, partnerMultiplier, salesTeam, supportTeam, quarterGroups, isManager, profile, printMode, approval }) {
   const contractMonths = deal.contract_months || 12
+  const cancelledProducts = dealProducts.filter((dp) => dp.status === 'cancelled')
+  const cancelledPaidTotal = cancelledProducts.reduce((sum, dp) => {
+    const lineTotal = productLineTotal(dp, partnerMultiplier)
+    const activeMonths = dp.billing_months ?? contractMonths
+    return sum + lineTotal * (activeMonths / contractMonths)
+  }, 0)
+  const cancelledPaidRevenue = cancelledProducts.reduce((sum, dp) => {
+    const activeMonths = dp.billing_months ?? contractMonths
+    return sum + resolveProductValue(dp) * (activeMonths / contractMonths)
+  }, 0)
+  const cancelledPaidCogs = cancelledProducts.reduce((sum, dp) => {
+    const activeMonths = dp.billing_months ?? contractMonths
+    return sum + effectiveCogs(dp) * (activeMonths / contractMonths)
+  }, 0)
+  const annualInvestmentTotal = customerAcv + cancelledPaidTotal
+  const displayBaseAcv = baseAcv + cancelledPaidRevenue
+  const displayTotalCogs = totalCogs + cancelledPaidCogs
   const row = (label, value, accent) => (
     <div className={`flex justify-between text-sm py-1 ${accent ? 'font-semibold' : ''}`}>
       <span className={accent ? 'text-gray-900' : 'text-gray-500'}>{label}</span>
@@ -288,7 +307,7 @@ function OverviewContent({ deal, dealProducts, activeProducts, amendments, total
                   })}
                   <tr className="border-t-2 border-gray-200 bg-gray-50">
                     <td colSpan={5} className="px-4 py-2.5 font-semibold text-gray-900 text-sm">Annual Investment</td>
-                    <td className="px-4 py-2.5 text-right font-bold text-purple-700">{fmt(customerAcv, 2)}</td>
+                    <td className="px-4 py-2.5 text-right font-bold text-purple-700">{fmt(annualInvestmentTotal, 2)}</td>
                   </tr>
                 </tbody>
               </table>
@@ -371,17 +390,17 @@ function OverviewContent({ deal, dealProducts, activeProducts, amendments, total
                 )
               })}
               <tr className="border-t-2 border-gray-200 bg-gray-50">
-                <td className="px-4 py-2.5 font-semibold text-gray-900 text-sm">Total (active)</td>
-                {partnerStack.length > 0 && <td className="px-4 py-2.5 text-right font-bold text-purple-700">{fmt(customerAcv, 2)}</td>}
+                <td className="px-4 py-2.5 font-semibold text-gray-900 text-sm">Total</td>
+                {partnerStack.length > 0 && <td className="px-4 py-2.5 text-right font-bold text-purple-700">{fmt(annualInvestmentTotal, 2)}</td>}
                 <td className="px-4 py-2.5 text-right font-bold text-gray-900">
-                  {fmt(calcTotalRevenue(activeProducts), 2)}
+                  {fmt(calcTotalRevenue(activeProducts) + cancelledPaidRevenue, 2)}
                 </td>
                 {totalCogs > 0 && isManager && (
                   <td className="px-4 py-2.5 text-right font-bold text-teal-700">
-                    {fmt(calcTotalRevenue(activeProducts) - totalCogs, 2)}
+                    {fmt(calcTotalRevenue(activeProducts) + cancelledPaidRevenue - displayTotalCogs, 2)}
                   </td>
                 )}
-                {totalCogs > 0 && <td className="px-4 py-2.5 text-right font-bold text-gray-700">{fmt(totalCogs, 2)}</td>}
+                {totalCogs > 0 && <td className="px-4 py-2.5 text-right font-bold text-gray-700">{fmt(displayTotalCogs, 2)}</td>}
                 {isManager && <td className="px-4 py-2.5 text-right font-bold text-indigo-700">{fmt(totalCommission, 2)}</td>}
               </tr>
             </tbody>
@@ -395,25 +414,25 @@ function OverviewContent({ deal, dealProducts, activeProducts, amendments, total
         {(() => {
           const totalSpif = calcTotalSpif(supportTeam)
           const totalPayout = calcTotalPayout(totalCommission, totalSpif)
-          const trilogyNet = calcTrilogyNet(baseAcv, totalCogs, totalPayout)
+          const trilogyNet = calcTrilogyNet(displayBaseAcv, displayTotalCogs, totalPayout)
           return (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className={`grid grid-cols-1 gap-3 ${isManager ? 'sm:grid-cols-2' : ''}`}>
               {/* Stack 1: Customer Price */}
               <div className="bg-gray-50 rounded-xl p-4 space-y-1.5 text-sm">
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Customer Price</p>
-                {totalCogs > 0 && (
+                {displayTotalCogs > 0 && (
                   <div className="flex justify-between">
                     <span className="text-gray-500">Vendor Cost (COGS)</span>
-                    <span className="font-medium text-gray-900">{fmt(totalCogs, 2)}</span>
+                    <span className="font-medium text-gray-900">{fmt(displayTotalCogs, 2)}</span>
                   </div>
                 )}
                 <div className="flex justify-between text-teal-700">
                   <span>+ Trilogy Margin</span>
-                  <span className="font-medium">+{fmt(calcTrilogyMargin(baseAcv, totalCogs), 2)}</span>
+                  <span className="font-medium">+{fmt(calcTrilogyMargin(displayBaseAcv, displayTotalCogs), 2)}</span>
                 </div>
                 <div className="flex justify-between pt-1.5 border-t border-gray-200">
                   <span className="font-medium text-gray-700">Trilogy ACV</span>
-                  <span className="font-medium text-gray-900">{fmt(baseAcv, 2)}</span>
+                  <span className="font-medium text-gray-900">{fmt(displayBaseAcv, 2)}</span>
                 </div>
                 {partnerStack.map((dp) => (
                   <div key={dp.id} className="space-y-0.5">
@@ -426,21 +445,21 @@ function OverviewContent({ deal, dealProducts, activeProducts, amendments, total
                 ))}
                 <div className="flex justify-between pt-1.5 border-t border-gray-200 font-semibold">
                   <span className="text-gray-900">Customer ACV</span>
-                  <span className="text-gray-900">{fmt(customerAcv, 2)}</span>
+                  <span className="text-gray-900">{fmt(annualInvestmentTotal, 2)}</span>
                 </div>
               </div>
 
-              {/* Stack 2: Trilogy Net */}
-              <div className="bg-gray-50 rounded-xl p-4 space-y-1.5 text-sm">
+              {/* Stack 2: Trilogy Net — manager only */}
+              {isManager && <div className="bg-gray-50 rounded-xl p-4 space-y-1.5 text-sm">
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Trilogy Net</p>
                 <div className="flex justify-between">
                   <span className="font-medium text-gray-700">Trilogy ACV</span>
-                  <span className="font-medium text-gray-900">{fmt(baseAcv, 2)}</span>
+                  <span className="font-medium text-gray-900">{fmt(displayBaseAcv, 2)}</span>
                 </div>
-                {totalCogs > 0 && (
+                {displayTotalCogs > 0 && (
                   <div className="flex justify-between text-red-600">
                     <span>− Vendor Cost (COGS)</span>
-                    <span className="font-medium">−{fmt(totalCogs, 2)}</span>
+                    <span className="font-medium">−{fmt(displayTotalCogs, 2)}</span>
                   </div>
                 )}
                 {!deal.is_tbn_property && totalPayout > 0 && (
@@ -453,7 +472,7 @@ function OverviewContent({ deal, dealProducts, activeProducts, amendments, total
                   <span className="text-gray-900">Trilogy Net</span>
                   <span className={trilogyNet >= 0 ? 'text-teal-700' : 'text-red-600'}>{fmt(trilogyNet, 2)}</span>
                 </div>
-              </div>
+              </div>}
             </div>
           )
         })()}
@@ -467,27 +486,31 @@ function OverviewContent({ deal, dealProducts, activeProducts, amendments, total
         <section>
           <h4 className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Team</h4>
           <div className="bg-gray-50 rounded-xl p-4 space-y-2">
-            {salesTeam.map((m) => (
-              <div key={m.id} className="flex justify-between text-sm">
-                <div>
-                  <span className="font-medium text-gray-900">{m.people?.name}</span>
-                  <span className="text-gray-400 ml-2 text-xs">Sales</span>
+            {salesTeam.map((m) => {
+              const isOwnRow = m.people?.email === profile?.email
+              return (
+                <div key={m.id} className="flex justify-between text-sm">
+                  <div>
+                    <span className="font-medium text-gray-900">{m.people?.name}</span>
+                    <span className="text-gray-400 ml-2 text-xs">Sales</span>
+                  </div>
+                  {isManager && <span className="font-medium text-indigo-700">{m.commission_percent}% · {fmt(calcIndividualCommission(totalCommission, m.commission_percent), 2)}</span>}
+                  {!isManager && isOwnRow && <span className="font-medium text-indigo-700">{fmt(calcIndividualCommission(totalCommission, m.commission_percent), 2)}</span>}
                 </div>
-                {isManager
-                  ? <span className="font-medium text-indigo-700">{m.commission_percent}% · {fmt(calcIndividualCommission(totalCommission, m.commission_percent), 2)}</span>
-                  : <span className="font-medium text-indigo-700">{fmt(calcIndividualCommission(totalCommission, m.commission_percent), 2)}</span>
-                }
-              </div>
-            ))}
-            {supportTeam.map((m) => (
-              <div key={m.id} className="flex justify-between text-sm">
-                <div>
-                  <span className="font-medium text-gray-900">{m.people?.name}</span>
-                  <span className="text-gray-400 ml-2 text-xs">Support SPIF</span>
+              )
+            })}
+            {supportTeam.map((m) => {
+              const isOwnRow = m.people?.email === profile?.email
+              return (
+                <div key={m.id} className="flex justify-between text-sm">
+                  <div>
+                    <span className="font-medium text-gray-900">{m.people?.name}</span>
+                    <span className="text-gray-400 ml-2 text-xs">Support SPIF</span>
+                  </div>
+                  {(isManager || isOwnRow) && <span className="font-medium text-amber-700">{fmt(m.spif_amount, 2)}</span>}
                 </div>
-                <span className="font-medium text-amber-700">{fmt(m.spif_amount, 2)}</span>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </section>
       )}

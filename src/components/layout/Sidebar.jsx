@@ -44,11 +44,27 @@ const MANAGER_NAV = [
 const SALES_NAV = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/deals', icon: Handshake, label: 'Deals' },
+  { to: '/analytics', icon: BarChart2, label: 'Analytics' },
+  { to: '/questionnaires', icon: ClipboardList, label: 'Questionnaires' },
+  { divider: true },
+  { to: '/products', icon: Package, label: 'Products' },
+  { to: '/vendors', icon: Store, label: 'Vendors' },
+  { to: '/partners', icon: Network, label: 'Partners' },
+  { to: '/categories', icon: Tag, label: 'Categories' },
+  { to: '/customers', icon: Building2, label: 'Customers' },
 ]
 
 const SUPPORT_NAV = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/deals', icon: Handshake, label: 'Deals' },
+  { to: '/analytics', icon: BarChart2, label: 'Analytics' },
+  { to: '/questionnaires', icon: ClipboardList, label: 'Questionnaires' },
+  { divider: true },
+  { to: '/products', icon: Package, label: 'Products' },
+  { to: '/vendors', icon: Store, label: 'Vendors' },
+  { to: '/partners', icon: Network, label: 'Partners' },
+  { to: '/categories', icon: Tag, label: 'Categories' },
+  { to: '/customers', icon: Building2, label: 'Customers' },
 ]
 
 export default function Sidebar({ open, onClose }) {

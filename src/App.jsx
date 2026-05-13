@@ -79,18 +79,18 @@ export default function App() {
             <Route path="deals/:id" element={<DealDetail />} />
             <Route path="deals/:id/edit" element={<NewDeal />} />
             <Route path="commission" element={<ManagerOnly><Commission /></ManagerOnly>} />
-            <Route path="analytics" element={<ManagerOnly><Analytics /></ManagerOnly>} />
-            <Route path="products" element={<ManagerOnly><Products /></ManagerOnly>} />
-            <Route path="vendors" element={<ManagerOnly><Vendors /></ManagerOnly>} />
-            <Route path="partners" element={<ManagerOnly><Partners /></ManagerOnly>} />
-            <Route path="categories" element={<ManagerOnly><Categories /></ManagerOnly>} />
+            <Route path="analytics" element={<Analytics />} />
+            <Route path="products" element={<Products />} />
+            <Route path="vendors" element={<Vendors />} />
+            <Route path="partners" element={<Partners />} />
+            <Route path="categories" element={<Categories />} />
             <Route path="people" element={<ManagerOnly><People /></ManagerOnly>} />
-            <Route path="customers" element={<ManagerOnly><Companies /></ManagerOnly>} />
+            <Route path="customers" element={<Companies />} />
             <Route path="companies" element={<Navigate to="/customers" replace />} />
             <Route path="activity" element={<ManagerOnly><Activity /></ManagerOnly>} />
             <Route path="settings" element={<ManagerOnly><Settings /></ManagerOnly>} />
             <Route path="users" element={<ManagerOnly><UserManagement /></ManagerOnly>} />
-            <Route path="questionnaires" element={<ManagerOnly><Questionnaires /></ManagerOnly>} />
+            <Route path="questionnaires" element={<Questionnaires />} />
           </Route>
         </Routes>
       </UserProvider>

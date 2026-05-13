@@ -483,7 +483,7 @@ export default function QuestionnairePublic() {
                       d="M12 6v6l4 2m6-2a10 10 0 11-20 0 10 10 0 0120 0z"
                     />
                   </svg>
-                  Due {formatDate(questionnaire.expires_at)}
+                  Available until {formatDate(questionnaire.expires_at)}
                 </span>
               )}
 

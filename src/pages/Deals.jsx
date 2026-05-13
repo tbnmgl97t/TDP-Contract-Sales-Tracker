@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, LayoutList, Columns, ChevronRight, Trash2, RotateCcw, ChevronLeft, ChevronRight as ChevronRightIcon } from 'lucide-react'
+import { Plus, LayoutList, Columns, ChevronRight, Trash2, RotateCcw, ChevronLeft, ChevronRight as ChevronRightIcon, CheckCircle2, Clock } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import Card from '../components/ui/Card'
 import { StageBadge } from '../components/ui/Badge'
@@ -41,8 +41,20 @@ function DealCard({ deal, onClick }) {
         </div>
         <ChevronRight size={14} className="text-gray-300 group-hover:text-primary-400 flex-shrink-0 mt-0.5 transition-colors" />
       </div>
-      <p className="text-xs text-gray-500 mb-3 truncate">{deal.company_name}</p>
-      <div className="flex items-end justify-between gap-2">
+      <p className="text-xs text-gray-500 truncate">{deal.company_name}</p>
+      {!['proposal', 'contracted'].includes(deal.stage) && deal._qStatus === 'submitted' && (
+        <div className="flex items-center gap-1 mt-1.5 mb-1">
+          <CheckCircle2 size={11} className="text-green-500 flex-shrink-0" />
+          <span className="text-xs text-green-600 font-medium">Questionnaire submitted</span>
+        </div>
+      )}
+      {!['proposal', 'contracted'].includes(deal.stage) && deal._qStatus === 'active' && (
+        <div className="flex items-center gap-1 mt-1.5 mb-1">
+          <Clock size={11} className="text-blue-400 flex-shrink-0" />
+          <span className="text-xs text-blue-500 font-medium">Questionnaire sent</span>
+        </div>
+      )}
+      <div className={`flex items-end justify-between gap-2 ${deal._qStatus ? 'mt-1.5' : 'mt-3'}`}>
         <div>
           <p className="text-xs text-gray-400 leading-none mb-0.5">Est. Trilogy Margin</p>
           <span className="text-sm font-bold text-navy-900">{fmt(deal.acv, 2)}</span>
@@ -307,11 +319,29 @@ export default function Deals() {
       })
     }
 
+    // Fetch questionnaire status per deal
+    const dealIds = (data || []).map((d) => d.id)
+    let qStatusMap = {}
+    if (dealIds.length > 0) {
+      const { data: questionnaires } = await supabase
+        .from('questionnaires')
+        .select('deal_id, status')
+        .in('deal_id', dealIds)
+        .in('status', ['submitted', 'active'])
+      const STATUS_PRIORITY = { submitted: 2, active: 1 }
+      ;(questionnaires || []).forEach((q) => {
+        const existing = qStatusMap[q.deal_id]
+        if (!existing || STATUS_PRIORITY[q.status] > STATUS_PRIORITY[existing]) {
+          qStatusMap[q.deal_id] = q.status
+        }
+      })
+    }
+
     const dealsWithTier = (data || []).map((d) => {
       const appr = approvalMap[d.id]
       const tier = appr?.margin_pct != null ? getMarginTier(d.acv, calcCogsFromMarginPct(d.acv, appr.margin_pct)) : null
       const computedAcv = computedAcvMap[d.id] ?? null
-      return { ...d, _tier: tier, _approval: appr, _actualAcv: d.stage === 'contracted' ? computedAcv : null, _proposedAcv: d.stage === 'proposal' ? computedAcv : null }
+      return { ...d, _tier: tier, _approval: appr, _actualAcv: d.stage === 'contracted' ? computedAcv : null, _proposedAcv: d.stage === 'proposal' ? computedAcv : null, _qStatus: qStatusMap[d.id] ?? null }
     })
     setDeals(dealsWithTier)
     setLoading(false)

@@ -10,6 +10,7 @@ import ConfirmDialog from '../components/ui/ConfirmDialog'
 import { DEAL_STAGES } from '../lib/constants'
 import { buildCommissionSchedule, fmt } from '../lib/commission'
 import { computeDealTotals, calcTotalRevenue, calcTotalContractValue, calcIndividualCommission, groupScheduleByQuarter } from '../lib/deals'
+import { productLineTotal } from '../lib/products'
 import { PageSpinner } from '../components/ui/Spinner'
 import { useUser } from '../contexts/UserContext'
 import Modal from '../components/ui/Modal'
@@ -99,6 +100,17 @@ export default function DealDetail() {
     [activeProducts, dealPartners]
   )
   const totalCommission = deal?.is_tbn_property ? 0 : _tc
+  const cancelledPaidTotal = useMemo(() => {
+    const contractMonths = deal?.contract_months || 12
+    return dealProducts
+      .filter((dp) => dp.status === 'cancelled')
+      .reduce((sum, dp) => {
+        const lineTotal = productLineTotal(dp, partnerMultiplier)
+        const activeMonths = dp.billing_months ?? contractMonths
+        return sum + lineTotal * (activeMonths / contractMonths)
+      }, 0)
+  }, [dealProducts, deal, partnerMultiplier])
+  const displayAcv = customerAcv + cancelledPaidTotal
   const schedule = useMemo(
     () => deal
       ? buildCommissionSchedule(deal, dealProducts, dealTeam.map((m) => ({ ...m, person_name: m.people?.name })))
@@ -214,7 +226,7 @@ export default function DealDetail() {
         <Card className="!py-3">
           <p className="text-xs text-gray-500">ACV</p>
           <p className="text-lg font-bold text-navy-900 mt-0.5">
-            {dealProducts.length > 0 ? fmt(customerAcv, 2) : fmt(deal.acv, 2)}
+            {dealProducts.length > 0 ? fmt(displayAcv, 2) : fmt(deal.acv, 2)}
           </p>
           {dealProducts.length > 0 && dealPartners.length > 0 && (
             <p className="text-xs text-gray-400 mt-0.5">Trilogy net: {fmt(productACV, 2)}</p>
@@ -224,7 +236,7 @@ export default function DealDetail() {
           )}
         </Card>
         {[
-          { label: 'Total Value', value: fmt(dealProducts.length > 0 ? calcTotalContractValue(customerAcv, deal.contract_months || 12) : (deal.total_contract_value || deal.acv), 2), show: true },
+          { label: 'Total Value', value: fmt(dealProducts.length > 0 ? calcTotalContractValue(displayAcv, deal.contract_months || 12) : (deal.total_contract_value || deal.acv), 2), show: true },
           { label: 'Contract Months', value: deal.contract_months || 12, show: true },
           { label: 'Commission', value: fmt(totalCommission, 2), show: isManager },
         ].filter((s) => s.show).map((stat) => (
@@ -288,13 +300,13 @@ export default function DealDetail() {
                       </div>
                     </div>
                     {isManager && <Badge color="green">{m.commission_percent}% commission</Badge>}
-                    {!isManager && isOwnRow && <Badge color="green">{fmt(calcIndividualCommission(totalCommission, m.commission_percent), 2)}</Badge>}
+                    {!isManager && isOwnRow && <Badge color="green">{m.commission_percent}% commission</Badge>}
                   </div>
                 )
               })}
               {supportTeam.map((m) => {
                 const isOwnRow = m.people?.email === profile?.email
-                const showSpif = isManager || isSales || isOwnRow
+                const showSpif = isManager || isOwnRow
                 return (
                   <div key={m.id} className="flex items-center justify-between py-1.5">
                     <div className="flex items-center gap-2.5">
@@ -389,6 +401,7 @@ export default function DealDetail() {
           amendments={amendments}
           onClose={() => setShowOverview(false)}
           isManager={isManager}
+          profile={profile}
         />
       )}
       {showProposal && (

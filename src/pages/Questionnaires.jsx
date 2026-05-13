@@ -726,17 +726,6 @@ export default function Questionnaires() {
 
   if (userLoading) return <PageSpinner />
 
-  if (!isManager) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <p className="text-base font-semibold text-navy-900 mb-1">Access restricted</p>
-          <p className="text-sm text-gray-500">This page is only available to managers.</p>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       {/* Page header */}
