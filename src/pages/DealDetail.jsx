@@ -195,11 +195,9 @@ export default function DealDetail() {
           >
             Proposal
           </Button>
-          {isManager && (
-            <Button variant="secondary" size="sm" onClick={() => setShowQuestionnaireBuilder(true)} icon={<FileText size={14} />}>
-              Questionnaire
-            </Button>
-          )}
+          <Button variant="secondary" size="sm" onClick={() => setShowQuestionnaireBuilder(true)} icon={<FileText size={14} />}>
+            Questionnaire
+          </Button>
           {isManager && deal.stage === 'contracted' && (
             <Button variant="secondary" size="sm" onClick={() => setShowAmend(true)} icon={<GitBranch size={14} />}>Amend</Button>
           )}
@@ -328,20 +326,18 @@ export default function DealDetail() {
       </div>
 
       {/* Questionnaires */}
-      {isManager && (
-        <DealQuestionnairesCard
-          questionnaires={questionnaires}
-          setQuestionnaires={setQuestionnaires}
-          deal={deal}
-          showBuilder={showQuestionnaireBuilder}
-          onCloseBuilder={() => setShowQuestionnaireBuilder(false)}
-          onCreated={(openBuilder) => {
-            if (openBuilder) { setShowQuestionnaireBuilder(true); return }
-            setShowQuestionnaireBuilder(false)
-            load()
-          }}
-        />
-      )}
+      <DealQuestionnairesCard
+        questionnaires={questionnaires}
+        setQuestionnaires={setQuestionnaires}
+        deal={deal}
+        showBuilder={showQuestionnaireBuilder}
+        onCloseBuilder={() => setShowQuestionnaireBuilder(false)}
+        onCreated={(openBuilder) => {
+          if (openBuilder) { setShowQuestionnaireBuilder(true); return }
+          setShowQuestionnaireBuilder(false)
+          load()
+        }}
+      />
 
       {/* Products */}
       <Card>

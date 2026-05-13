@@ -36,7 +36,7 @@ export function useDealDetail(id) {
       supabase.from('contracts').select('*, ai_analysis').eq('deal_id', id).order('uploaded_at', { ascending: false }),
       supabase.from('deal_partners').select('*, partners(name)').eq('deal_id', id).order('sort_order'),
       supabase.from('deal_amendments').select('*').eq('deal_id', id).order('effective_date'),
-      supabase.from('products').select('*, vendors(name)').eq('is_active', true).order('name'),
+      supabase.from('products').select('*, vendors(name)').eq('active', true).order('name'),
       supabase.from('commission_settings').select('global_commission_rate').maybeSingle(),
     ])
 

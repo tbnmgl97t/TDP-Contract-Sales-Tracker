@@ -1,15 +1,34 @@
+import { useState } from 'react'
 import { Activity } from 'lucide-react'
 import { format } from 'date-fns'
 import Card, { CardHeader } from '../ui/Card'
 import { formatAuditEntry, groupEntriesByDate, auditTypeStyle } from '../../lib/auditLog'
 
+const PAGE_SIZE = 15
+
 export default function ActivityLogCard({ auditLog, dealTeam, dealProducts }) {
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+
   if (!auditLog.length) return null
 
   const people = dealTeam.map((m) => ({ id: m.person_id, name: m.people?.name })).filter((p) => p.name)
   const groups = groupEntriesByDate(auditLog, { dealProducts, people })
   const hasVisible = groups.some((g) => g.entries.length > 0)
   if (!hasVisible) return null
+
+  // Flatten all entries preserving their date group label
+  const allEntries = groups.flatMap((g) => g.entries.map((e) => ({ ...e, groupLabel: g.label })))
+  const visibleEntries = allEntries.slice(0, visibleCount)
+  const hasMore = visibleCount < allEntries.length
+  const remaining = allEntries.length - visibleCount
+
+  // Re-group the visible slice
+  const visibleGroups = []
+  visibleEntries.forEach(({ groupLabel, entry, formatted }) => {
+    let group = visibleGroups.find((g) => g.label === groupLabel)
+    if (!group) { group = { label: groupLabel, entries: [] }; visibleGroups.push(group) }
+    group.entries.push({ entry, formatted })
+  })
 
   return (
     <Card>
@@ -18,7 +37,7 @@ export default function ActivityLogCard({ auditLog, dealTeam, dealProducts }) {
         action={<Activity size={15} className="text-gray-400" />}
       />
       <div className="space-y-5">
-        {groups.map((group) => (
+        {visibleGroups.map((group) => (
           <div key={group.label}>
             <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">{group.label}</p>
             <div>
@@ -70,6 +89,14 @@ export default function ActivityLogCard({ auditLog, dealTeam, dealProducts }) {
           </div>
         ))}
       </div>
+      {hasMore && (
+        <button
+          onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
+          className="mt-4 w-full text-xs font-medium text-primary-500 hover:text-primary-600 py-2 rounded-lg hover:bg-primary-50 transition-colors"
+        >
+          Show {Math.min(PAGE_SIZE, remaining)} more · {remaining} remaining
+        </button>
+      )}
     </Card>
   )
 }
