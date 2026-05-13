@@ -5,8 +5,10 @@ const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!
 const FROM_EMAIL    = Deno.env.get('FROM_EMAIL')    ?? 'noreply@notify.trilogydigital.com'
 const APP_URL       = Deno.env.get('APP_URL')       ?? 'https://salesflow.trilogyapps.com'
 
-// Events that get in-app notifications (viewed is excluded — too noisy)
-const NOTIFY_IN_APP = new Set(['activity_started', 'submitted', 'reminder_sent'])
+// Events that go to deal team (in-app + email)
+// reminder_sent is handled separately — goes to customer contact
+const TEAM_EVENTS    = new Set(['activity_started', 'submitted'])
+const NOTIFY_IN_APP  = new Set(['activity_started', 'submitted', 'reminder_sent'])
 
 function emailShell(body: string) {
   return `<!DOCTYPE html>
@@ -40,6 +42,18 @@ function btn(url: string, label: string, primary = true) {
   return `<a href="${url}" style="display:inline-block;background:${bg};color:#fff;padding:10px 22px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;margin-right:10px;">${label}</a>`
 }
 
+async function sendEmail(to: string, subject: string, html: string) {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${RESEND_API_KEY}`,
+    },
+    body: JSON.stringify({ from: FROM_EMAIL, to, subject, html }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+}
+
 serve(async (req) => {
   try {
     const { questionnaire_id, event_type } = await req.json()
@@ -49,9 +63,10 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
 
+    // Load questionnaire + deal + company
     const { data: q } = await supabase
       .from('questionnaires')
-      .select('*, deals(id, name, company_name)')
+      .select('*, deals(id, name, company_name, company_id)')
       .eq('id', questionnaire_id)
       .single()
 
@@ -63,13 +78,12 @@ serve(async (req) => {
     const dealUrl  = `${APP_URL}/deals/${dealId}`
 
     type EventType = 'viewed' | 'activity_started' | 'submitted' | 'reminder_sent'
-
     const templates: Record<EventType, { subject: string; body: string }> = {
       viewed: {
         subject: `Questionnaire viewed — ${q.title}`,
         body: `
           <h2 style="margin:0 0 8px;color:#17263A;font-size:20px;">Questionnaire Viewed</h2>
-          <p style="color:#6b7280;margin:0 0 20px;">Someone opened the questionnaire <strong style="color:#17263A;">"${q.title}"</strong> for <strong style="color:#17263A;">${dealName}</strong>. No answers have been entered yet.</p>
+          <p style="color:#6b7280;margin:0 0 20px;">Someone opened <strong style="color:#17263A;">"${q.title}"</strong> for <strong style="color:#17263A;">${dealName}</strong>. No answers entered yet.</p>
           ${btn(dealUrl, 'View Deal')}`,
       },
       activity_started: {
@@ -87,24 +101,24 @@ serve(async (req) => {
           ${btn(dealUrl, 'View Responses')}`,
       },
       reminder_sent: {
-        subject: `⏰ Reminder: Questionnaire awaiting response — ${q.title}`,
+        subject: `Friendly reminder — ${q.title}`,
         body: `
-          <h2 style="margin:0 0 8px;color:#17263A;font-size:20px;">Questionnaire Reminder</h2>
-          <p style="color:#6b7280;margin:0 0 20px;">The questionnaire <strong style="color:#17263A;">"${q.title}"</strong> for <strong style="color:#17263A;">${dealName}</strong> was opened but hasn't received any responses in <strong style="color:#17263A;">${q.reminder_days} days</strong>.</p>
-          ${btn(formUrl, 'View Form', false)} ${btn(dealUrl, 'View Deal')}`,
+          <h2 style="margin:0 0 8px;color:#17263A;font-size:20px;">Just a quick reminder</h2>
+          <p style="color:#6b7280;margin:0 0 20px;">We sent you a questionnaire a little while ago and wanted to follow up. When you have a moment, we'd appreciate your responses for <strong style="color:#17263A;">${dealName}</strong>.</p>
+          ${btn(formUrl, 'Complete Questionnaire')}`,
       },
     }
 
     const template = templates[event_type as EventType]
     if (!template) return new Response('Unknown event type', { status: 400 })
 
-    // Resolve deal team member emails
+    // ── Get deal team members ────────────────────────────────────────────────
     const { data: team } = await supabase
       .from('deal_team')
       .select('people ( email, name )')
       .eq('deal_id', dealId)
 
-    const recipients: { email: string; name: string }[] = (team ?? [])
+    const teamMembers: { email: string; name: string }[] = (team ?? [])
       .map((t: { people: { email: string; name: string } | null }) => t.people)
       .filter(Boolean)
       .filter((p: { email: string }) => p.email)
@@ -112,36 +126,86 @@ serve(async (req) => {
     const errors: string[] = []
     let totalSent = 0
 
-    // Send email to each team member
-    for (const recipient of recipients) {
-      try {
-        const res = await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${RESEND_API_KEY}`,
-          },
-          body: JSON.stringify({
-            from:    FROM_EMAIL,
-            to:      recipient.email,
-            subject: template.subject,
-            html:    emailShell(template.body),
-          }),
-        })
-        if (!res.ok) {
-          const err = await res.text()
-          errors.push(`Resend error for ${recipient.email}: ${err}`)
-        } else {
-          totalSent++
+    // ── reminder_sent: send to customer contact ──────────────────────────────
+    if (event_type === 'reminder_sent') {
+      let contactEmail: string | null = null
+      let contactName:  string | null = null
+
+      if (q.deals?.company_id) {
+        const { data: contacts } = await supabase
+          .from('contacts')
+          .select('email, name, is_primary')
+          .eq('company_id', q.deals.company_id)
+          .not('email', 'is', null)
+          .order('is_primary', { ascending: false })
+          .limit(5)
+
+        const primary = (contacts ?? []).find((c: { is_primary: boolean }) => c.is_primary)
+        const first   = contacts?.[0]
+        const picked  = primary || first
+        if (picked?.email) {
+          contactEmail = picked.email
+          contactName  = picked.name
         }
-      } catch (e) {
-        errors.push(`Email send failed: ${(e as Error).message}`)
       }
 
-      // Write in-app notification (skip for 'viewed')
+      if (contactEmail) {
+        // Send reminder to customer
+        try {
+          await sendEmail(contactEmail, template.subject, emailShell(template.body))
+          totalSent++
+        } catch (e) {
+          errors.push(`Customer email failed: ${(e as Error).message}`)
+        }
+
+        // Notify team: reminder was sent
+        const teamNotifTitle  = `⏰ Questionnaire reminder sent — ${q.title}`
+        const teamNotifBody   = `Reminder sent to ${contactName || contactEmail} for ${dealName}`
+        for (const m of teamMembers) {
+          await supabase.from('notifications').insert({
+            user_email: m.email,
+            type:       'questionnaire_reminder_sent',
+            title:      teamNotifTitle,
+            body:       teamNotifBody,
+            deal_id:    dealId,
+          })
+        }
+      } else {
+        // No contact email — notify team to send manually
+        const noEmailTitle = `⚠️ No contact email — ${q.title}`
+        const noEmailBody  = `No contact email found for ${dealName}. Copy the questionnaire link and send manually.`
+        for (const m of teamMembers) {
+          await supabase.from('notifications').insert({
+            user_email: m.email,
+            type:       'questionnaire_no_contact',
+            title:      noEmailTitle,
+            body:       `${noEmailBody}\n${formUrl}`,
+            deal_id:    dealId,
+          })
+        }
+      }
+
+      return new Response(
+        JSON.stringify({ sent: totalSent, contact: contactEmail, errors: errors.length ? errors : undefined }),
+        { headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+
+    // ── All other events: send to deal team ──────────────────────────────────
+    for (const member of teamMembers) {
+      // viewed: email only, no in-app
+      if (event_type !== 'viewed') {
+        try {
+          await sendEmail(member.email, template.subject, emailShell(template.body))
+          totalSent++
+        } catch (e) {
+          errors.push(`Email failed for ${member.email}: ${(e as Error).message}`)
+        }
+      }
+
       if (NOTIFY_IN_APP.has(event_type) && dealId) {
         await supabase.from('notifications').insert({
-          user_email: recipient.email,
+          user_email: member.email,
           type:       `questionnaire_${event_type}`,
           title:      template.subject,
           body:       `${dealName} — ${q.title}`,
@@ -150,10 +214,10 @@ serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ sent: totalSent, errors: errors.length ? errors : undefined }), {
-      headers: { 'Content-Type': 'application/json' },
-      status: 200,
-    })
+    return new Response(
+      JSON.stringify({ sent: totalSent, errors: errors.length ? errors : undefined }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
   } catch (err) {
     return new Response(JSON.stringify({ error: (err as Error).message }), { status: 500 })
   }
