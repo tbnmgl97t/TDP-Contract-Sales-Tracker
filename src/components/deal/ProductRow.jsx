@@ -249,7 +249,6 @@ export default function ProductRow({ item, allItems, products, vendors, pricingM
             <Input
               label="Margin %"
               type="number" min="0" max="99.9" step="0.1" suffix="%"
-              disabled={!isManager}
               hint={item.cogs_per_unit && item._trilogy_margin_pct !== '' && parseFloat(item._trilogy_margin_pct) >= 0
                 ? `Rate: $${calcUnitPriceFromMargin(parseFloat(item.cogs_per_unit), parseFloat(item._trilogy_margin_pct)).toFixed(4)}`
                 : undefined}

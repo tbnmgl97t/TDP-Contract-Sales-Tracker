@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useUser } from '../contexts/UserContext'
 import { Plus, Pencil, Trash2, Package } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import Card from '../components/ui/Card'
@@ -13,6 +14,7 @@ import { PageSpinner } from '../components/ui/Spinner'
 import ProductForm from '../components/ProductForm'
 
 export default function Products() {
+  const { isManager } = useUser()
   const [products, setProducts] = useState([])
   const [vendors, setVendors] = useState([])
   const [categories, setCategories] = useState([])
@@ -69,7 +71,7 @@ export default function Products() {
           <option value="">All Vendors</option>
           {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
         </select>
-        <Button onClick={() => setModal({})} icon={<Plus size={15} />}>Add Product</Button>
+        {isManager && <Button onClick={() => setModal({})} icon={<Plus size={15} />}>Add Product</Button>}
       </div>
 
       <Card padding={false}>
@@ -85,7 +87,7 @@ export default function Products() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100">
-                  {['Product', 'SKU', 'Vendor', 'Category', 'Metric', 'Rate', 'Status', ''].map((h) => (
+                  {['Product', 'SKU', 'Vendor', 'Category', 'Metric', ...(isManager ? ['Rate'] : []), 'Status', ''].map((h) => (
                     <th key={h} className={`px-4 py-3 font-medium text-gray-500 text-xs uppercase tracking-wide ${h === '' || h === 'Rate' || h === 'Status' ? 'text-right' : 'text-left'} ${['SKU', 'Category', 'Metric'].includes(h) ? 'hidden md:table-cell' : ''}`}>{h}</th>
                   ))}
                 </tr>
@@ -104,16 +106,18 @@ export default function Products() {
                     <td className="px-4 py-3.5 hidden sm:table-cell">
                       <Badge color={p.commission_metric === 'GM' ? 'blue' : 'green'}>{p.commission_metric}</Badge>
                     </td>
-                    <td className="px-4 py-3.5 text-right font-medium text-navy-900">
-                      {p.rate_overridden
-                        ? <span>{(p.base_rate * 100).toFixed(1)}% <span className="text-xs text-primary-500 font-normal">custom</span></span>
-                        : <span className="text-gray-500">{(globalRate * 100).toFixed(1)}%</span>
-                      }
-                    </td>
+                    {isManager && (
+                      <td className="px-4 py-3.5 text-right font-medium text-navy-900">
+                        {p.rate_overridden
+                          ? <span>{(p.base_rate * 100).toFixed(1)}% <span className="text-xs text-primary-500 font-normal">custom</span></span>
+                          : <span className="text-gray-500">{(globalRate * 100).toFixed(1)}%</span>
+                        }
+                      </td>
+                    )}
                     <td className="px-4 py-3.5 text-right">
                       <Badge color={p.active ? 'green' : 'gray'}>{p.active ? 'Active' : 'Inactive'}</Badge>
                     </td>
-                    <td className="px-4 py-3.5 text-right">
+                    {isManager && <td className="px-4 py-3.5 text-right">
                       <div className="flex justify-end gap-1">
                         <button onClick={async () => {
                           if (p.is_usage_based) {
@@ -129,7 +133,7 @@ export default function Products() {
                           <Trash2 size={14} />
                         </button>
                       </div>
-                    </td>
+                    </td>}
                   </tr>
                 ))}
               </tbody>

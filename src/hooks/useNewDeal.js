@@ -185,7 +185,7 @@ export function useNewDeal(editId) {
       // Insert active products
       const dpToInsert = dealProducts.filter((dp) => dp.product_id && dp.status !== 'cancelled')
       const dpRows = dpToInsert.map(({ _id, _vendor_id, _margin_type, _margin_pct, _cogs_per_item, _list_price_per_item, _trilogy_margin_pct, id: _dbId, products: _, unit_price, cogs_per_unit, milestones: _milestones, _milestone_total, ...dp }) => {
-        const row = { ...dp, deal_id: dealId }
+        const row = { ...dp, deal_id: dealId, status: dp.status || 'active' }
         return Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v === '' ? null : v]))
       })
       if (dpRows.length) {
