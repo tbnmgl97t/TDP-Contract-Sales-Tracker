@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Edit, Trash2, FileText, AlertTriangle, GitBranch } from 'lucide-react'
+import { Edit, Trash2, FileText, AlertTriangle, GitBranch, RefreshCw, ArrowRight } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import Card, { CardHeader } from '../components/ui/Card'
 import { StageBadge, Badge } from '../components/ui/Badge'
@@ -28,6 +28,7 @@ import CommissionScheduleCard from '../components/deal/CommissionScheduleCard'
 import DealContractsCard from '../components/deal/DealContractsCard'
 import ActivityLogCard from '../components/deal/ActivityLogCard'
 import DealNotesCard from '../components/deal/DealNotesCard'
+import StartRenewalModal from '../components/deal/StartRenewalModal'
 import ContractAnalysisCards from '../components/deal/ContractAnalysisCards'
 import DealBrainPanel from '../components/deal/DealBrainPanel'
 
@@ -67,6 +68,8 @@ export default function DealDetail() {
     auditLog,
     approval, setApproval,
     globalRate,
+    predecessor,
+    successors,
     loading,
     currentUserId,
     load,
@@ -84,6 +87,7 @@ export default function DealDetail() {
   const [showOverview, setShowOverview] = useState(false)
   const [showProposal, setShowProposal] = useState(false)
   const [showAmend, setShowAmend] = useState(false)
+  const [showRenewal, setShowRenewal] = useState(false)
   const [showQuestionnaireBuilder, setShowQuestionnaireBuilder] = useState(false)
   const [editingAmendment, setEditingAmendment] = useState(null)
   // AI coordination state (shared between DealBrainPanel & ContractAnalysisCards)
@@ -185,6 +189,26 @@ export default function DealDetail() {
             {deal.is_tbn_property && <Badge color="orange">TBN Property</Badge>}
           </div>
           <p className="text-sm text-gray-500">{deal.company_name}</p>
+          {/* Predecessor / successor links */}
+          {predecessor && (
+            <button
+              onClick={() => navigate(`/deals/${predecessor.id}`)}
+              className="flex items-center gap-1 text-xs text-gray-400 hover:text-primary-500 transition-colors mt-1"
+            >
+              <ArrowRight size={11} className="rotate-180" />
+              Renewal of <span className="font-medium text-gray-600">{predecessor.name}</span>
+            </button>
+          )}
+          {successors.length > 0 && successors.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => navigate(`/deals/${s.id}`)}
+              className="flex items-center gap-1 text-xs text-gray-400 hover:text-primary-500 transition-colors mt-1"
+            >
+              <ArrowRight size={11} />
+              Renewal: <span className="font-medium text-gray-600">{s.name}</span>
+            </button>
+          ))}
         </div>
         <div className="flex gap-2 flex-wrap">
           <Button variant="secondary" size="sm" onClick={() => setShowOverview(true)}>Overview</Button>
@@ -201,6 +225,9 @@ export default function DealDetail() {
           </Button>
           {isManager && deal.stage === 'contracted' && (
             <Button variant="secondary" size="sm" onClick={() => setShowAmend(true)} icon={<GitBranch size={14} />}>Amend</Button>
+          )}
+          {isManager && deal.stage === 'contracted' && successors.length === 0 && (
+            <Button variant="secondary" size="sm" onClick={() => setShowRenewal(true)} icon={<RefreshCw size={14} />}>Start Renewal</Button>
           )}
           <Button variant="secondary" size="sm" onClick={() => navigate(`/deals/${id}/edit`)} icon={<Edit size={14} />}>Edit</Button>
           <Button variant="danger" size="sm" onClick={() => setDeleteDlg(true)} icon={<Trash2 size={14} />}>Delete</Button>
@@ -422,6 +449,14 @@ export default function DealDetail() {
           products={allProducts}
           onAmended={() => load()}
           onClose={() => setShowAmend(false)}
+        />
+      )}
+      {showRenewal && (
+        <StartRenewalModal
+          deal={deal}
+          dealProducts={dealProducts}
+          dealTeam={dealTeam}
+          onClose={() => setShowRenewal(false)}
         />
       )}
       {editingAmendment && (

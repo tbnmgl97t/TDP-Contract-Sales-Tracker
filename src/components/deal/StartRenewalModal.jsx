@@ -1,0 +1,234 @@
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { RefreshCw } from 'lucide-react'
+import { supabase } from '../../lib/supabase'
+import { useUser } from '../../contexts/UserContext'
+import Modal from '../ui/Modal'
+import Button from '../ui/Button'
+import Input, { Select } from '../ui/Input'
+import { calcMonthsBetweenDates } from '../../lib/deals'
+import { fmt } from '../../lib/commission'
+
+const RENEWAL_TYPES = [
+  { value: 'flat',        label: 'Flat Renewal',  desc: 'Same products and pricing'         },
+  { value: 'expansion',   label: 'Expansion',      desc: 'Adding products or increasing ACV' },
+  { value: 'contraction', label: 'Contraction',    desc: 'Reducing products or lowering ACV' },
+  { value: 'churn',       label: 'Not Renewing',   desc: 'Customer is churning'              },
+]
+
+function addDays(dateStr, days) {
+  const d = new Date(dateStr + 'T00:00:00')
+  d.setDate(d.getDate() + days)
+  return d.toISOString().split('T')[0]
+}
+
+function addMonths(dateStr, months) {
+  const d = new Date(dateStr + 'T00:00:00')
+  d.setMonth(d.getMonth() + months)
+  d.setDate(d.getDate() - 1)          // end of last day
+  return d.toISOString().split('T')[0]
+}
+
+export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClose }) {
+  const navigate  = useNavigate()
+  const { profile } = useUser()
+
+  const defaultStart = deal.contract_end ? addDays(deal.contract_end, 1) : ''
+  const defaultEnd   = defaultStart
+    ? addMonths(defaultStart, deal.contract_months || 12)
+    : ''
+
+  const [renewalType,    setRenewalType]    = useState('flat')
+  const [contractStart,  setContractStart]  = useState(defaultStart)
+  const [contractEnd,    setContractEnd]    = useState(defaultEnd)
+  const [note,           setNote]           = useState('')
+  const [checkedIds,     setCheckedIds]     = useState(new Set())
+  const [saving,         setSaving]         = useState(false)
+
+  // Active products only (not cancelled)
+  const activeProducts = dealProducts.filter((dp) => dp.status !== 'cancelled')
+
+  useEffect(() => {
+    setCheckedIds(new Set(activeProducts.map((dp) => dp.id)))
+  }, [dealProducts])
+
+  function toggleProduct(id) {
+    setCheckedIds((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const contractMonths = contractStart && contractEnd
+    ? (calcMonthsBetweenDates(new Date(contractStart), new Date(contractEnd)) || deal.contract_months || 12)
+    : (deal.contract_months || 12)
+
+  async function handleCreate() {
+    setSaving(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const createdBy = session?.user?.email || profile?.email || null
+
+      // 1. Insert the renewal deal
+      const { data: newDeal, error: dealErr } = await supabase.from('deals').insert({
+        name:                `${deal.name} — Renewal`,
+        company_id:          deal.company_id          || null,
+        company_name:        deal.company_name,
+        stage:               'qualified',
+        deal_type:           'renewal',
+        renewal_type:        renewalType,
+        predecessor_deal_id: deal.id,
+        is_tbn_property:     deal.is_tbn_property,
+        contract_start:      contractStart || null,
+        contract_end:        contractEnd   || null,
+        contract_months:     contractMonths,
+        notes:               note || null,
+        created_by:          createdBy,
+        updated_at:          new Date().toISOString(),
+      }).select().single()
+
+      if (dealErr || !newDeal) {
+        console.error('Renewal deal insert failed:', dealErr)
+        return
+      }
+
+      // 2. Copy selected products (reset billing dates to new contract)
+      const productsToCopy = activeProducts.filter((dp) => checkedIds.has(dp.id))
+      if (productsToCopy.length) {
+        const dpRows = productsToCopy.map((dp) => ({
+          deal_id:           newDeal.id,
+          product_id:        dp.product_id,
+          commission_metric: dp.commission_metric,
+          annual_value:      dp.annual_value,
+          net_revenue:       dp.net_revenue,
+          cogs_amount:       dp.cogs_amount,
+          commission_amount: dp.commission_amount,
+          base_rate:         dp.base_rate,
+          billing_start_date: contractStart || null,
+          billing_months:    contractMonths,
+          status:            'active',
+        }))
+        await supabase.from('deal_products').insert(dpRows)
+      }
+
+      // 3. Copy team members
+      const teamRows = dealTeam
+        .filter((m) => m.person_id)
+        .map((m) => ({
+          deal_id:            newDeal.id,
+          person_id:          m.person_id,
+          role:               m.role,
+          commission_percent: m.commission_percent,
+          spif_amount:        m.spif_amount || null,
+        }))
+      if (teamRows.length) await supabase.from('deal_team').insert(teamRows)
+
+      navigate(`/deals/${newDeal.id}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const isChurn = renewalType === 'churn'
+
+  return (
+    <Modal title="Start Renewal" onClose={onClose} size="md">
+      <div className="space-y-5">
+
+        {/* Renewal type */}
+        <div>
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Renewal Type</p>
+          <div className="grid grid-cols-2 gap-2">
+            {RENEWAL_TYPES.map((t) => (
+              <button
+                key={t.value}
+                onClick={() => setRenewalType(t.value)}
+                className={`text-left p-3 rounded-xl border-2 transition-all ${
+                  renewalType === t.value
+                    ? t.value === 'churn'
+                      ? 'border-red-400 bg-red-50'
+                      : 'border-primary-400 bg-primary-50'
+                    : 'border-gray-100 hover:border-gray-200 bg-white'
+                }`}
+              >
+                <p className={`text-sm font-semibold ${renewalType === t.value && t.value === 'churn' ? 'text-red-700' : renewalType === t.value ? 'text-primary-700' : 'text-navy-900'}`}>
+                  {t.label}
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">{t.desc}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Contract dates */}
+        {!isChurn && (
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="New Contract Start"
+              type="date"
+              value={contractStart}
+              onChange={(e) => setContractStart(e.target.value)}
+            />
+            <Input
+              label="New Contract End"
+              type="date"
+              value={contractEnd}
+              onChange={(e) => setContractEnd(e.target.value)}
+            />
+          </div>
+        )}
+        {!isChurn && contractMonths > 0 && (
+          <p className="text-xs text-gray-400 -mt-2">{contractMonths} month contract</p>
+        )}
+
+        {/* Products to carry over */}
+        {!isChurn && activeProducts.length > 0 && (
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              Carry Over Products
+            </p>
+            <div className="space-y-1.5">
+              {activeProducts.map((dp) => (
+                <label key={dp.id} className="flex items-center gap-3 p-2.5 rounded-lg bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={checkedIds.has(dp.id)}
+                    onChange={() => toggleProduct(dp.id)}
+                    className="w-4 h-4 rounded accent-primary-500"
+                  />
+                  <span className="flex-1 text-sm text-navy-900">{dp.products?.name || 'Product'}</span>
+                  <span className="text-xs text-gray-400 font-medium">{fmt(dp.annual_value || 0, 2)}/yr</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Note */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Note <span className="text-gray-400 font-normal">(optional)</span></label>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder={isChurn ? 'Reason for churn…' : 'Renewal context, price changes, etc.'}
+            rows={2}
+            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent resize-none"
+          />
+        </div>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button
+            icon={<RefreshCw size={14} />}
+            loading={saving}
+            onClick={handleCreate}
+            className={isChurn ? '!bg-red-500 hover:!bg-red-600' : ''}
+          >
+            {isChurn ? 'Record as Churned' : 'Create Renewal Deal'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}

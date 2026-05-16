@@ -16,6 +16,8 @@ export function useDealDetail(id) {
   const [auditLog, setAuditLog] = useState([])
   const [approval, setApproval] = useState(null)
   const [globalRate, setGlobalRate] = useState(0.07)
+  const [predecessor, setPredecessor] = useState(null)
+  const [successors, setSuccessors] = useState([])
   const [loading, setLoading] = useState(true)
   const [currentUserId, setCurrentUserId] = useState(null)
 
@@ -85,6 +87,16 @@ export function useDealDetail(id) {
       }
     }
 
+    // Load predecessor + successors after we have the deal
+    let pred = null
+    let succs = []
+    if (d?.predecessor_deal_id) {
+      const { data: p } = await supabase.from('deals').select('id, name, company_name, stage, contract_end').eq('id', d.predecessor_deal_id).single()
+      pred = p || null
+    }
+    const { data: succData } = await supabase.from('deals').select('id, name, stage, deal_type, renewal_type').eq('predecessor_deal_id', id).is('deleted_at', null)
+    succs = succData || []
+
     setDeal(d)
     setDealProducts((dps || []).map((dp) => ({
       ...dp,
@@ -98,6 +110,8 @@ export function useDealDetail(id) {
     if (commSettings?.global_commission_rate) setGlobalRate(commSettings.global_commission_rate)
     setApproval(appr || null)
     setQuestionnaires(qsWithCounts)
+    setPredecessor(pred)
+    setSuccessors(succs)
     setLoading(false)
   }
 
@@ -204,6 +218,8 @@ export function useDealDetail(id) {
     auditLog,
     approval, setApproval,
     globalRate,
+    predecessor,
+    successors,
     loading,
     currentUserId,
     load,

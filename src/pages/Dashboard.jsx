@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { differenceInDays, parseISO, format } from 'date-fns'
-import { TrendingUp, Handshake, DollarSign, Users, ArrowRight, Landmark } from 'lucide-react'
+import { TrendingUp, Handshake, DollarSign, Users, ArrowRight, Landmark, RefreshCw } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import Card, { CardHeader } from '../components/ui/Card'
 import { StageBadge } from '../components/ui/Badge'
@@ -48,6 +48,7 @@ export default function Dashboard() {
   const [dealFinancials, setDealFinancials] = useState({})
   const [estRate, setEstRate] = useState(7)
   const [showEstimator, setShowEstimator] = useState(false)
+  const [renewedDealIds, setRenewedDealIds] = useState(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const navigate = useNavigate()
@@ -69,6 +70,16 @@ export default function Dashboard() {
         data = fallback
       }
       setDeals(data || [])
+
+      // Load which contracted deals already have a renewal in flight
+      const contractedIds = (data || []).filter((d) => d.stage === 'contracted').map((d) => d.id)
+      if (contractedIds.length > 0) {
+        const { data: renewals } = await supabase
+          .from('deals')
+          .select('predecessor_deal_id')
+          .in('predecessor_deal_id', contractedIds)
+        setRenewedDealIds(new Set((renewals || []).map((r) => r.predecessor_deal_id).filter(Boolean)))
+      }
 
       // Seed estimator rate from global commission settings
       const { data: settings } = await supabase.from('commission_settings').select('global_commission_rate').eq('id', 1).single()
@@ -212,25 +223,42 @@ export default function Dashboard() {
               const soon   = d.daysLeft <= 60
               const dotColor  = urgent ? 'bg-red-400'    : soon ? 'bg-amber-400'    : 'bg-green-400'
               const badgeCls  = urgent ? 'bg-red-50 text-red-600' : soon ? 'bg-amber-50 text-amber-600' : 'bg-green-50 text-green-600'
+              const hasRenewal = renewedDealIds.has(d.id)
               return (
-                <button
+                <div
                   key={d.id}
-                  onClick={() => navigate(`/deals/${d.id}`)}
-                  className="w-full flex items-center gap-3 py-3 -mx-4 px-4 hover:bg-gray-50 transition-colors text-left"
+                  className="flex items-center gap-3 py-3 -mx-4 px-4"
                 >
-                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-navy-900 truncate">{d.name}</p>
-                    <p className="text-xs text-gray-400 truncate">{d.company_name}</p>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <p className="text-sm font-bold text-navy-900">{fmt(d.acv, 0)}<span className="text-xs font-normal text-gray-400"> /yr</span></p>
-                    <p className="text-xs text-gray-400">{format(parseISO(d.contract_end), 'MMM d, yyyy')}</p>
-                  </div>
-                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${badgeCls}`}>
-                    {d.daysLeft === 0 ? 'Today' : `${d.daysLeft}d`}
-                  </span>
-                </button>
+                  <button
+                    onClick={() => navigate(`/deals/${d.id}`)}
+                    className="flex items-center gap-3 flex-1 min-w-0 hover:opacity-75 transition-opacity text-left"
+                  >
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-navy-900 truncate">{d.name}</p>
+                      <p className="text-xs text-gray-400 truncate">{d.company_name}</p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-sm font-bold text-navy-900">{fmt(d.acv, 0)}<span className="text-xs font-normal text-gray-400"> /yr</span></p>
+                      <p className="text-xs text-gray-400">{format(parseISO(d.contract_end), 'MMM d, yyyy')}</p>
+                    </div>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${badgeCls}`}>
+                      {d.daysLeft === 0 ? 'Today' : `${d.daysLeft}d`}
+                    </span>
+                  </button>
+                  {isManager && (
+                    hasRenewal
+                      ? <span className="text-xs text-primary-500 font-medium flex-shrink-0">Renewal in progress</span>
+                      : (
+                        <button
+                          onClick={() => navigate(`/deals/${d.id}`)}
+                          className="flex items-center gap-1 text-xs font-medium text-primary-500 hover:text-primary-600 transition-colors flex-shrink-0 whitespace-nowrap"
+                        >
+                          <RefreshCw size={11} /> Start Renewal
+                        </button>
+                      )
+                  )}
+                </div>
               )
             })}
           </div>
