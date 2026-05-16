@@ -18,6 +18,7 @@ export function useDealDetail(id) {
   const [globalRate, setGlobalRate] = useState(0.07)
   const [predecessor, setPredecessor] = useState(null)
   const [successors, setSuccessors] = useState([])
+  const [currentPricing, setCurrentPricing] = useState({})
   const [loading, setLoading] = useState(true)
   const [currentUserId, setCurrentUserId] = useState(null)
 
@@ -87,6 +88,19 @@ export function useDealDetail(id) {
       }
     }
 
+    // Load current pricing params (for renewal price-change indicator)
+    let pricingMap = {}
+    if (d?.deal_type === 'renewal') {
+      const { data: pp } = await supabase
+        .from('product_pricing_params')
+        .select('product_id, unit_price, cogs_per_unit, effective_date')
+        .order('effective_date', { ascending: false })
+      // Keep only the most-recent row per product
+      for (const row of (pp || [])) {
+        if (!pricingMap[row.product_id]) pricingMap[row.product_id] = row
+      }
+    }
+
     // Load predecessor + successors after we have the deal
     let pred = null
     let succs = []
@@ -112,6 +126,7 @@ export function useDealDetail(id) {
     setQuestionnaires(qsWithCounts)
     setPredecessor(pred)
     setSuccessors(succs)
+    setCurrentPricing(pricingMap)
     setLoading(false)
   }
 
@@ -220,6 +235,7 @@ export function useDealDetail(id) {
     globalRate,
     predecessor,
     successors,
+    currentPricing,
     loading,
     currentUserId,
     load,

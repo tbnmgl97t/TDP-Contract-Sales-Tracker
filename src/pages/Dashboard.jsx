@@ -78,6 +78,7 @@ export default function Dashboard() {
           .from('deals')
           .select('predecessor_deal_id')
           .in('predecessor_deal_id', contractedIds)
+          .is('deleted_at', null)
         setRenewedDealIds(new Set((renewals || []).map((r) => r.predecessor_deal_id).filter(Boolean)))
       }
 

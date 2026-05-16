@@ -1,9 +1,25 @@
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, TrendingUp, TrendingDown } from 'lucide-react'
 import { fmt } from '../../lib/commission'
 import { productLineTotal, resolveMonthlyValue } from '../../lib/products'
 import { format } from 'date-fns'
 
-export default function DealProductsTable({ dealProducts, amendments, deal, customerAcv, partnerMultiplier }) {
+function PriceChangeBadge({ snapshot, current }) {
+  if (!snapshot || !current) return null
+  const snap = parseFloat(snapshot)
+  const curr = parseFloat(current)
+  if (isNaN(snap) || isNaN(curr) || snap === 0) return null
+  const pct = ((curr - snap) / snap) * 100
+  if (Math.abs(pct) < 0.5) return null   // ignore sub-0.5% noise
+  const up = curr > snap
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded ml-1.5 ${up ? 'bg-amber-50 text-amber-600' : 'bg-blue-50 text-blue-600'}`}>
+      {up ? <TrendingUp size={9} /> : <TrendingDown size={9} />}
+      {up ? '+' : ''}{pct.toFixed(1)}% list
+    </span>
+  )
+}
+
+export default function DealProductsTable({ dealProducts, amendments, deal, customerAcv, partnerMultiplier, currentPricing = {} }) {
   const fmtRate = (val) => {
     if (val == null || val === '') return '—'
     const n = parseFloat(val)
@@ -54,6 +70,7 @@ export default function DealProductsTable({ dealProducts, amendments, deal, cust
             const isGM = dp.commission_metric === 'GM'
             const isSupport = !!prod?.is_support_charge
             const isCancelled = dp.status === 'cancelled'
+            const listPrice = dp.product_id ? currentPricing[dp.product_id] : null
             const cancellationAmendment = isCancelled && dp.cancellation_amendment_id
               ? amendments.find((a) => a.id === dp.cancellation_amendment_id)
               : null
@@ -70,6 +87,9 @@ export default function DealProductsTable({ dealProducts, amendments, deal, cust
                 <tr key={dp.id} className={`${hasMilestones ? 'border-b-0' : ''} ${isCancelled ? 'opacity-60' : ''}`}>
                   <td className="py-3 font-medium text-navy-900">
                     <span className={isCancelled ? 'line-through text-gray-400' : ''}>{prod?.name}</span>
+                    {!isCancelled && !isGM && listPrice?.unit_price != null && dp.unit_price_snapshot != null && (
+                      <PriceChangeBadge snapshot={dp.unit_price_snapshot} current={listPrice.unit_price} />
+                    )}
                     {isCancelled && (
                       <span className="ml-2 text-xs bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 font-normal not-italic">
                         Cancelled{cancellationAmendment?.effective_date ? ` ${format(new Date(cancellationAmendment.effective_date + 'T12:00:00'), 'MMM d, yyyy')}` : ''}
@@ -86,7 +106,16 @@ export default function DealProductsTable({ dealProducts, amendments, deal, cust
                   </td>
                   <td className="py-3 hidden sm:table-cell text-gray-400 italic text-xs">{isGM && !isSupport ? prod?.unit_label : ''}</td>
                   <td className="py-3 text-right hidden md:table-cell text-gray-700">{isCancelled ? '—' : monthlyCell}</td>
-                  <td className="py-3 text-right hidden md:table-cell text-gray-700">{!isCancelled && isGM && !isSupport ? fmtRate(dp.unit_price_snapshot) : '—'}</td>
+                  <td className="py-3 text-right hidden md:table-cell text-gray-700">
+                    {!isCancelled && isGM && !isSupport ? (
+                      <span className="inline-flex items-center justify-end gap-1">
+                        {fmtRate(dp.unit_price_snapshot)}
+                        {listPrice?.unit_price != null && (
+                          <PriceChangeBadge snapshot={dp.unit_price_snapshot} current={listPrice.unit_price} />
+                        )}
+                      </span>
+                    ) : '—'}
+                  </td>
                   <td className="py-3 text-right hidden md:table-cell text-gray-700">{!isCancelled && isGM && !isSupport && dp.overage_rate && parseFloat(dp.overage_rate) > 0 ? fmtRaw(dp.overage_rate) : '—'}</td>
                   <td className="py-3 text-right hidden md:table-cell">
                     {isCancelled ? (

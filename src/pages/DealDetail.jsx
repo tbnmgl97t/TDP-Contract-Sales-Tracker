@@ -70,6 +70,7 @@ export default function DealDetail() {
     globalRate,
     predecessor,
     successors,
+    currentPricing,
     loading,
     currentUserId,
     load,
@@ -379,6 +380,7 @@ export default function DealDetail() {
           deal={deal}
           customerAcv={customerAcv}
           partnerMultiplier={partnerMultiplier}
+          currentPricing={currentPricing}
         />
       </Card>
 
@@ -457,6 +459,7 @@ export default function DealDetail() {
           dealProducts={dealProducts}
           dealTeam={dealTeam}
           onClose={() => setShowRenewal(false)}
+          onCreated={(newId) => { setShowRenewal(false); navigate(`/deals/${newId}`) }}
         />
       )}
       {editingAmendment && (

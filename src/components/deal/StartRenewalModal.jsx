@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useUser } from '../../contexts/UserContext'
@@ -29,8 +28,7 @@ function addMonths(dateStr, months) {
   return d.toISOString().split('T')[0]
 }
 
-export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClose }) {
-  const navigate  = useNavigate()
+export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClose, onCreated }) {
   const { profile } = useUser()
 
   const defaultStart = deal.contract_end ? addDays(deal.contract_end, 1) : ''
@@ -44,6 +42,7 @@ export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClos
   const [note,           setNote]           = useState('')
   const [checkedIds,     setCheckedIds]     = useState(new Set())
   const [saving,         setSaving]         = useState(false)
+  const [error,          setError]          = useState(null)
 
   // Active products only (not cancelled)
   const activeProducts = dealProducts.filter((dp) => dp.status !== 'cancelled')
@@ -66,50 +65,70 @@ export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClos
 
   async function handleCreate() {
     setSaving(true)
+    setError(null)
     try {
       const { data: { session } } = await supabase.auth.getSession()
       const createdBy = session?.user?.email || profile?.email || null
 
-      // 1. Insert the renewal deal
+      // 1. Insert deal with core columns (avoids PostgREST schema-cache issues
+      //    on newly-added columns — predecessor_deal_id & renewal_type are patched below)
       const { data: newDeal, error: dealErr } = await supabase.from('deals').insert({
-        name:                `${deal.name} — Renewal`,
-        company_id:          deal.company_id          || null,
-        company_name:        deal.company_name,
-        stage:               'qualified',
-        deal_type:           'renewal',
-        renewal_type:        renewalType,
-        predecessor_deal_id: deal.id,
-        is_tbn_property:     deal.is_tbn_property,
-        contract_start:      contractStart || null,
-        contract_end:        contractEnd   || null,
-        contract_months:     contractMonths,
-        notes:               note || null,
-        created_by:          createdBy,
-        updated_at:          new Date().toISOString(),
+        name:            `${deal.name} — Renewal`,
+        company_id:      deal.company_id || null,
+        company_name:    deal.company_name,
+        stage:           'qualified',
+        deal_type:       'renewal',
+        is_tbn_property: deal.is_tbn_property,
+        contract_start:  contractStart || null,
+        contract_end:    contractEnd   || null,
+        contract_months: contractMonths,
+        notes:           note || null,
+        created_by:      createdBy,
+        updated_at:      new Date().toISOString(),
       }).select().single()
 
       if (dealErr || !newDeal) {
         console.error('Renewal deal insert failed:', dealErr)
+        setError(dealErr?.message || 'Failed to create renewal deal.')
         return
       }
 
-      // 2. Copy selected products (reset billing dates to new contract)
+      // 1b. Patch the new columns separately (safe even if schema cache is stale)
+      await supabase.from('deals').update({
+        predecessor_deal_id: deal.id,
+        renewal_type:        renewalType,
+      }).eq('id', newDeal.id)
+
+      // 2. Copy selected products — carry over all pricing fields
       const productsToCopy = activeProducts.filter((dp) => checkedIds.has(dp.id))
       if (productsToCopy.length) {
         const dpRows = productsToCopy.map((dp) => ({
-          deal_id:           newDeal.id,
-          product_id:        dp.product_id,
-          commission_metric: dp.commission_metric,
-          annual_value:      dp.annual_value,
-          net_revenue:       dp.net_revenue,
-          cogs_amount:       dp.cogs_amount,
-          commission_amount: dp.commission_amount,
-          base_rate:         dp.base_rate,
-          billing_start_date: contractStart || null,
-          billing_months:    contractMonths,
-          status:            'active',
+          deal_id:                newDeal.id,
+          product_id:             dp.product_id,
+          commission_metric:      dp.commission_metric,
+          base_rate:              dp.base_rate,
+          // NAVC/RAV fields
+          monthly_value:          dp.monthly_value          ?? null,
+          annual_value:           dp.annual_value           ?? null,
+          yearly_cost:            dp.yearly_cost            ?? null,
+          // GM / usage-based fields (snapshot from original contract)
+          monthly_quantity:       dp.monthly_quantity       ?? null,
+          unit_price_snapshot:    dp.unit_price_snapshot    ?? null,
+          cogs_per_unit_snapshot: dp.cogs_per_unit_snapshot ?? null,
+          monthly_cost:           dp.monthly_cost           ?? null,
+          total_revenue:          dp.total_revenue          ?? null,
+          overage_rate:           dp.overage_rate           ?? null,
+          // Totals
+          cogs_amount:            dp.cogs_amount            ?? null,
+          net_revenue:            dp.net_revenue            ?? null,
+          commission_amount:      dp.commission_amount      ?? null,
+          // Renewal contract period
+          billing_start_date:     contractStart || null,
+          billing_months:         contractMonths,
+          status:                 'active',
         }))
-        await supabase.from('deal_products').insert(dpRows)
+        const { error: dpErr } = await supabase.from('deal_products').insert(dpRows)
+        if (dpErr) console.error('deal_products copy failed:', dpErr)
       }
 
       // 3. Copy team members
@@ -124,7 +143,7 @@ export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClos
         }))
       if (teamRows.length) await supabase.from('deal_team').insert(teamRows)
 
-      navigate(`/deals/${newDeal.id}`)
+      onCreated(newDeal.id)
     } finally {
       setSaving(false)
     }
@@ -133,7 +152,7 @@ export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClos
   const isChurn = renewalType === 'churn'
 
   return (
-    <Modal title="Start Renewal" onClose={onClose} size="md">
+    <Modal open={true} title="Start Renewal" onClose={onClose} size="md">
       <div className="space-y-5">
 
         {/* Renewal type */}
@@ -216,6 +235,10 @@ export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClos
             className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent resize-none"
           />
         </div>
+
+        {error && (
+          <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>
+        )}
 
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
