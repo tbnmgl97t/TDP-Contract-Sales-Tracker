@@ -1,12 +1,12 @@
 import { useState } from 'react'
-import { Upload, FileText, FileCheck, Download, Eye, Sparkles, Loader, Trash2 } from 'lucide-react'
+import { Upload, FileText, FileCheck, Download, Eye, Sparkles, Loader, Trash2, History } from 'lucide-react'
 import { format } from 'date-fns'
 import { supabase } from '../../lib/supabase'
 import Card, { CardHeader } from '../ui/Card'
 import Button from '../ui/Button'
 import ConfirmDialog from '../ui/ConfirmDialog'
 
-export default function DealContractsCard({ contracts, dealId, load, logEvent, onAnalyzePdf }) {
+export default function DealContractsCard({ contracts, predecessorContracts = [], predecessorName, dealId, load, logEvent, onAnalyzePdf }) {
   const [uploading, setUploading] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [deleteContractDlg, setDeleteContractDlg] = useState(null)
@@ -146,6 +146,41 @@ export default function DealContractsCard({ contracts, dealId, load, logEvent, o
                 ))}
               </div>
             </>
+          )}
+          {/* Previous contract reference */}
+          {predecessorContracts.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                <History size={11} />
+                Previous Contract{predecessorName ? ` — ${predecessorName}` : ''}
+              </p>
+              <div className="space-y-2">
+                {predecessorContracts.map((contract) => (
+                  <div key={contract.id} className="flex items-center gap-3 p-3 border border-gray-100 rounded-xl bg-gray-50/60 opacity-75">
+                    <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                      <FileCheck size={18} className="text-gray-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-600 truncate">{contract.file_name}</p>
+                      <p className="text-xs text-gray-400">
+                        {format(new Date(contract.uploaded_at), 'MMM d, yyyy')}
+                        {contract.file_size && ` · ${(contract.file_size / 1024).toFixed(0)} KB`}
+                      </p>
+                    </div>
+                    <div className="flex gap-1">
+                      {contract.mime_type === 'application/pdf' && (
+                        <button onClick={() => handleView(contract)} className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors" title="View PDF">
+                          <Eye size={15} />
+                        </button>
+                      )}
+                      <button onClick={() => handleDownload(contract)} className="p-2 text-gray-400 hover:text-navy-900 hover:bg-gray-100 rounded-lg transition-colors" title="Download">
+                        <Download size={15} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </Card>
       </div>

@@ -69,6 +69,7 @@ export default function DealDetail() {
     approval, setApproval,
     globalRate,
     predecessor,
+    predecessorContracts,
     successors,
     currentPricing,
     loading,
@@ -401,6 +402,8 @@ export default function DealDetail() {
       {/* Contracts */}
       <DealContractsCard
         contracts={contracts}
+        predecessorContracts={predecessorContracts}
+        predecessorName={predecessor?.name}
         dealId={id}
         load={load}
         logEvent={logEvent}

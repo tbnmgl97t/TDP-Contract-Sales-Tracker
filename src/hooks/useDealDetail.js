@@ -17,6 +17,7 @@ export function useDealDetail(id) {
   const [approval, setApproval] = useState(null)
   const [globalRate, setGlobalRate] = useState(0.07)
   const [predecessor, setPredecessor] = useState(null)
+  const [predecessorContracts, setPredecessorContracts] = useState([])
   const [successors, setSuccessors] = useState([])
   const [currentPricing, setCurrentPricing] = useState({})
   const [loading, setLoading] = useState(true)
@@ -103,10 +104,15 @@ export function useDealDetail(id) {
 
     // Load predecessor + successors after we have the deal
     let pred = null
+    let predContracts = []
     let succs = []
     if (d?.predecessor_deal_id) {
-      const { data: p } = await supabase.from('deals').select('id, name, company_name, stage, contract_end').eq('id', d.predecessor_deal_id).single()
+      const [{ data: p }, { data: pc }] = await Promise.all([
+        supabase.from('deals').select('id, name, company_name, stage, contract_end').eq('id', d.predecessor_deal_id).single(),
+        supabase.from('contracts').select('*').eq('deal_id', d.predecessor_deal_id).order('uploaded_at', { ascending: false }),
+      ])
       pred = p || null
+      predContracts = pc || []
     }
     const { data: succData } = await supabase.from('deals').select('id, name, stage, deal_type, renewal_type').eq('predecessor_deal_id', id).is('deleted_at', null)
     succs = succData || []
@@ -125,6 +131,7 @@ export function useDealDetail(id) {
     setApproval(appr || null)
     setQuestionnaires(qsWithCounts)
     setPredecessor(pred)
+    setPredecessorContracts(predContracts)
     setSuccessors(succs)
     setCurrentPricing(pricingMap)
     setLoading(false)
@@ -234,6 +241,7 @@ export function useDealDetail(id) {
     approval, setApproval,
     globalRate,
     predecessor,
+    predecessorContracts,
     successors,
     currentPricing,
     loading,
