@@ -66,7 +66,6 @@ export default function App() {
       <UserProvider>
         <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gray-50"><PageSpinner /></div>}>
           <Routes>
-            <Route path="/slide-lab" element={<SlideDebug />} />
             <Route path="/login" element={session ? <Navigate to="/dashboard" replace /> : <Login />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/q/:token" element={<QuestionnairePublic />} />
@@ -98,6 +97,7 @@ export default function App() {
               <Route path="settings" element={<ManagerOnly><Settings /></ManagerOnly>} />
               <Route path="users" element={<ManagerOnly><UserManagement /></ManagerOnly>} />
               <Route path="questionnaires" element={<Questionnaires />} />
+              <Route path="slide-lab" element={<SlideDebug />} />
             </Route>
           </Routes>
         </Suspense>
