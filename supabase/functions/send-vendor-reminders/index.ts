@@ -11,7 +11,7 @@ import { serve } from 'https://deno.land/std@0.208.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')!
-const FROM_EMAIL     = Deno.env.get('FROM_EMAIL')    ?? 'noreply@trilogydigital.com'
+const FROM_EMAIL     = Deno.env.get('FROM_EMAIL')    ?? 'noreply@notify.trilogydigital.com'
 const APP_URL        = Deno.env.get('APP_URL')       ?? 'https://salesflow.trilogydigital.com'
 
 const REMINDER_DAYS_BEFORE = [60, 30, 7]
