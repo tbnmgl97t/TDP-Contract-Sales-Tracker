@@ -5,6 +5,7 @@ import { useUser } from '../../contexts/UserContext'
 import Modal from '../ui/Modal'
 import Button from '../ui/Button'
 import Input, { Select } from '../ui/Input'
+import RichTextEditor from '../ui/RichTextEditor'
 import { calcMonthsBetweenDates } from '../../lib/deals'
 import { fmt } from '../../lib/commission'
 
@@ -37,6 +38,7 @@ export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClos
     : ''
 
   const [renewalType,    setRenewalType]    = useState('flat')
+  const [dealName,       setDealName]       = useState(`${deal.name} — Renewal`)
   const [contractStart,  setContractStart]  = useState(defaultStart)
   const [contractEnd,    setContractEnd]    = useState(defaultEnd)
   const [note,           setNote]           = useState('')
@@ -72,8 +74,14 @@ export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClos
 
       // 1. Insert deal with core columns (avoids PostgREST schema-cache issues
       //    on newly-added columns — predecessor_deal_id & renewal_type are patched below)
+
+      // Derive ACV from the selected products being carried over
+      const productsToCopy = activeProducts.filter((dp) => checkedIds.has(dp.id))
+      const inheritedAcv = productsToCopy.reduce((sum, dp) =>
+        sum + (dp.total_revenue || dp.annual_value || dp.yearly_cost || 0), 0)
+
       const { data: newDeal, error: dealErr } = await supabase.from('deals').insert({
-        name:            `${deal.name} — Renewal`,
+        name:            dealName.trim() || `${deal.name} — Renewal`,
         company_id:      deal.company_id || null,
         company_name:    deal.company_name,
         stage:           'qualified',
@@ -82,7 +90,7 @@ export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClos
         contract_start:  contractStart || null,
         contract_end:    contractEnd   || null,
         contract_months: contractMonths,
-        notes:           note || null,
+        acv:             inheritedAcv || null,
         created_by:      createdBy,
         updated_at:      new Date().toISOString(),
       }).select().single()
@@ -100,7 +108,6 @@ export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClos
       }).eq('id', newDeal.id)
 
       // 2. Copy selected products — carry over all pricing fields
-      const productsToCopy = activeProducts.filter((dp) => checkedIds.has(dp.id))
       if (productsToCopy.length) {
         const dpRows = productsToCopy.map((dp) => ({
           deal_id:                newDeal.id,
@@ -118,6 +125,12 @@ export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClos
           monthly_cost:           dp.monthly_cost           ?? null,
           total_revenue:          dp.total_revenue          ?? null,
           overage_rate:           dp.overage_rate           ?? null,
+          // GM fixed-pricing fields
+          list_price:             dp.list_price             ?? null,
+          discount_pct:           dp.discount_pct           ?? null,
+          quantity:               dp.quantity               ?? null,
+          markup_pct:             dp.markup_pct             ?? null,
+          billing_mode:           dp.billing_mode           || 'monthly',
           // Totals
           cogs_amount:            dp.cogs_amount            ?? null,
           net_revenue:            dp.net_revenue            ?? null,
@@ -142,6 +155,17 @@ export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClos
           spif_amount:        m.spif_amount || null,
         }))
       if (teamRows.length) await supabase.from('deal_team').insert(teamRows)
+
+      // 4. Save note as a deal_notes entry so it appears in the timeline
+      const strippedNote = note.replace(/<[^>]*>/g, '').trim()
+      if (strippedNote) {
+        await supabase.from('deal_notes').insert({
+          deal_id:    newDeal.id,
+          content:    note.trim(),
+          note_type:  'note',
+          created_by: createdBy,
+        })
+      }
 
       onCreated(newDeal.id)
     } finally {
@@ -180,6 +204,13 @@ export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClos
           </div>
         </div>
 
+        {/* Deal name */}
+        <Input
+          label="Deal Name"
+          value={dealName}
+          onChange={(e) => setDealName(e.target.value)}
+        />
+
         {/* Contract dates */}
         {!isChurn && (
           <div className="grid grid-cols-2 gap-3">
@@ -217,7 +248,7 @@ export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClos
                     className="w-4 h-4 rounded accent-primary-500"
                   />
                   <span className="flex-1 text-sm text-navy-900">{dp.products?.name || 'Product'}</span>
-                  <span className="text-xs text-gray-400 font-medium">{fmt(dp.annual_value || 0, 2)}/yr</span>
+                  <span className="text-xs text-gray-400 font-medium">{fmt(dp.total_revenue || dp.annual_value || dp.yearly_cost || 0, 2)}/yr</span>
                 </label>
               ))}
             </div>
@@ -227,12 +258,10 @@ export default function StartRenewalModal({ deal, dealProducts, dealTeam, onClos
         {/* Note */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Note <span className="text-gray-400 font-normal">(optional)</span></label>
-          <textarea
+          <RichTextEditor
             value={note}
-            onChange={(e) => setNote(e.target.value)}
+            onChange={setNote}
             placeholder={isChurn ? 'Reason for churn…' : 'Renewal context, price changes, etc.'}
-            rows={2}
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent resize-none"
           />
         </div>
 

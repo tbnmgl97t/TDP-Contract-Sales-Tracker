@@ -30,8 +30,8 @@ function SpifTierRow({ tier, onChange, onRemove }) {
 function PersonForm({ initial, onSave, onClose }) {
   const [form, setForm] = useState(
     initial
-      ? { name: initial.name, email: initial.email || '', role: initial.role, active: initial.active }
-      : { name: '', email: '', role: 'sales', active: true }
+      ? { name: initial.name, email: initial.email || '', role: initial.role, active: initial.active, title: initial.title || '', bio: initial.bio || '' }
+      : { name: '', email: '', role: 'sales', active: true, title: '', bio: '' }
   )
   const [tiers, setTiers] = useState([])
   const [saving, setSaving] = useState(false)
@@ -89,6 +89,17 @@ function PersonForm({ initial, onSave, onClose }) {
             <span className="text-sm text-navy-900">Active</span>
           </label>
         </div>
+      </div>
+      <Input label="Title" placeholder="e.g. Director of Software Development" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+      <div>
+        <label className="block text-xs font-semibold text-gray-600 mb-1.5">Short Bio <span className="font-normal text-gray-400">(optional)</span></label>
+        <textarea
+          rows={3}
+          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary-400"
+          placeholder="Brief background shown on team slides…"
+          value={form.bio}
+          onChange={(e) => setForm({ ...form, bio: e.target.value })}
+        />
       </div>
 
       {isSupport && (
