@@ -160,8 +160,12 @@ export default function ProductRow({ item, allItems, products, vendors, pricingM
               _list_price_per_item: selectedProduct?.default_list_price || '',
               markup_pct: selectedProduct?.default_margin_type === 'percent' ? (selectedProduct?.default_margin_pct || '') : '',
               cogs_per_unit: defaults?.cogs_per_unit ?? (selectedProduct?.is_usage_based ? (selectedProduct?.default_cogs ?? '') : ''),
-              unit_price: defaults?.unit_price ?? (selectedProduct?.is_usage_based && selectedProduct?.default_cogs && selectedProduct?.default_margin_pct
-                ? parseFloat(calcUnitPriceFromMargin(parseFloat(selectedProduct.default_cogs), parseFloat(selectedProduct.default_margin_pct)).toFixed(6))
+              unit_price: defaults?.unit_price ?? (selectedProduct?.is_usage_based
+                ? (selectedProduct?.commission_metric !== 'GM'
+                  ? (selectedProduct?.default_list_price ?? '')           // NAVC/RAV: list price = rate per unit
+                  : (selectedProduct?.default_cogs && selectedProduct?.default_margin_pct
+                    ? parseFloat(calcUnitPriceFromMargin(parseFloat(selectedProduct.default_cogs), parseFloat(selectedProduct.default_margin_pct)).toFixed(6))
+                    : ''))
                 : ''),
               overage_rate: selectedProduct?.default_overage_rate ?? '',
               cogs_amount: selectedProduct?.quantity_label ? '' : (selectedProduct?.default_cogs || ''),
@@ -184,9 +188,14 @@ export default function ProductRow({ item, allItems, products, vendors, pricingM
               support_product_ids: selectedProduct?.is_support_charge ? (item.support_product_ids || []) : [],
               _trilogy_margin_pct: (() => {
                 if (selectedProduct?.is_support_charge) return ''
-                const u = parseFloat(defaults?.unit_price) || (selectedProduct?.is_usage_based && selectedProduct?.default_cogs && selectedProduct?.default_margin_pct
-                  ? calcUnitPriceFromMargin(parseFloat(selectedProduct.default_cogs), parseFloat(selectedProduct.default_margin_pct))
-                  : 0)
+                const fallbackRate = selectedProduct?.is_usage_based
+                  ? (selectedProduct?.commission_metric !== 'GM'
+                    ? parseFloat(selectedProduct?.default_list_price) || 0
+                    : (selectedProduct?.default_cogs && selectedProduct?.default_margin_pct
+                      ? calcUnitPriceFromMargin(parseFloat(selectedProduct.default_cogs), parseFloat(selectedProduct.default_margin_pct))
+                      : 0))
+                  : 0
+                const u = parseFloat(defaults?.unit_price) || fallbackRate
                 const c = parseFloat(defaults?.cogs_per_unit) || (selectedProduct?.is_usage_based ? parseFloat(selectedProduct?.default_cogs) || 0 : 0)
                 return u > 0 && c > 0 && u >= c ? parseFloat(((1 - c / u) * 100).toFixed(2)) : ''
               })(),
