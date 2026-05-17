@@ -368,7 +368,7 @@ export function auditTypeStyle(type) {
     case 'cancelled': return { dot: 'bg-amber-400',  chip: 'bg-amber-50 text-amber-700' }
     case 'contract':  return { dot: 'bg-blue-400',   chip: 'bg-blue-50 text-blue-700' }
     case 'team':      return { dot: 'bg-purple-400', chip: 'bg-purple-50 text-purple-700' }
-    case 'event':     return { dot: 'bg-gray-400',   chip: 'bg-gray-100 text-gray-600' }
+    case 'event':     return { dot: 'bg-teal-400',   chip: 'bg-teal-50 text-teal-700' }
     default:          return { dot: 'bg-gray-300',   chip: 'bg-gray-50 text-gray-500' }
   }
 }

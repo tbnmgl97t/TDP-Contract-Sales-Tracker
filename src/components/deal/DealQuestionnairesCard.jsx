@@ -18,6 +18,7 @@ export default function DealQuestionnairesCard({
   showBuilder,
   onCloseBuilder,
   onCreated,
+  onLogged,
 }) {
   const navigate = useNavigate()
   const [copyingQ, setCopyingQ] = useState(null)
@@ -295,6 +296,7 @@ export default function DealQuestionnairesCard({
           deal={deal}
           onCreated={() => { onCloseBuilder(); onCreated?.() }}
           onClose={onCloseBuilder}
+          onLogged={onLogged}
         />
       )}
 

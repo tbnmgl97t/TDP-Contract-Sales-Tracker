@@ -7,10 +7,11 @@ import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import { Select } from '../components/ui/Input'
 import { PageSpinner } from '../components/ui/Spinner'
-import { groupEntriesByDate, auditTypeStyle, mergeDeleteInsertPairs } from '../lib/auditLog'
+import { formatAuditEntry, auditTypeStyle, mergeDeleteInsertPairs } from '../lib/auditLog'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
-const PAGE_SIZE = 25
+const PAGE_SIZE = 15
+const FETCH_LIMIT = 1000 // fetch a large batch; filter/merge client-side for accurate pagination
 
 const TABLE_TYPE_MAP = {
   deals: 'deals',
@@ -18,6 +19,7 @@ const TABLE_TYPE_MAP = {
   deal_team: 'team',
   contracts: 'contracts',
   commission_settings: 'commission',
+  event: 'events',
 }
 
 function username(email) {
@@ -34,7 +36,6 @@ export default function Activity() {
   const [productMap, setProductMap] = useState({})
   const [personMap, setPersonMap] = useState({})
   const [uniqueUsers, setUniqueUsers] = useState([])
-  const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [loading, setLoading] = useState(true)
 
@@ -68,10 +69,10 @@ export default function Activity() {
 
     let query = supabase
       .from('audit_log')
-      .select('id, table_name, action, changed_by, old_values, new_values, description, created_at, deal_id', { count: 'exact' })
+      .select('id, table_name, action, changed_by, old_values, new_values, description, created_at, deal_id')
       .neq('table_name', 'commission_settings')
       .order('created_at', { ascending: false })
-      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1)
+      .limit(FETCH_LIMIT)
 
     // Type filter
     if (typeFilter !== 'all') {
@@ -80,9 +81,7 @@ export default function Activity() {
     }
 
     // User filter
-    if (userFilter !== 'all') {
-      query = query.eq('changed_by', userFilter)
-    }
+    if (userFilter !== 'all') query = query.eq('changed_by', userFilter)
 
     // Date filter
     if (dateFilter !== 'all') {
@@ -95,19 +94,14 @@ export default function Activity() {
       query = query.gte('created_at', cutoff)
     }
 
-    const { data, error, count } = await query
+    const { data, error } = await query
 
     if (!error && data) {
-      setTotal(count ?? 0)
-
       // Fetch deal names
       const dealIds = [...new Set(data.map((e) => e.deal_id).filter(Boolean))]
       let dealMap = {}
       if (dealIds.length > 0) {
-        const { data: deals } = await supabase
-          .from('deals')
-          .select('id, name, company_name')
-          .in('id', dealIds)
+        const { data: deals } = await supabase.from('deals').select('id, name, company_name').in('id', dealIds)
         if (deals) deals.forEach((d) => { dealMap[d.id] = d.name || d.company_name || null })
       }
 
@@ -120,10 +114,7 @@ export default function Activity() {
       )]
       const newProductMap = {}
       if (productIds.length > 0) {
-        const { data: prods } = await supabase
-          .from('products')
-          .select('id, name')
-          .in('id', productIds)
+        const { data: prods } = await supabase.from('products').select('id, name').in('id', productIds)
         if (prods) prods.forEach((p) => { newProductMap[p.id] = p.name })
       }
       setProductMap((prev) => ({ ...prev, ...newProductMap }))
@@ -137,25 +128,19 @@ export default function Activity() {
       )]
       const newPersonMap = {}
       if (personIds.length > 0) {
-        const { data: people } = await supabase
-          .from('people')
-          .select('id, name')
-          .in('id', personIds)
+        const { data: people } = await supabase.from('people').select('id, name').in('id', personIds)
         if (people) people.forEach((p) => { newPersonMap[p.id] = p.name })
       }
       setPersonMap((prev) => ({ ...prev, ...newPersonMap }))
 
       const merged = mergeDeleteInsertPairs(data)
-      setEntries(merged.map((e) => ({
-        ...e,
-        _dealName: e.deal_id ? dealMap[e.deal_id] : null,
-      })))
+      setEntries(merged.map((e) => ({ ...e, _dealName: e.deal_id ? dealMap[e.deal_id] : null })))
     } else if (error) {
       console.error('Activity load error:', error)
     }
 
     setLoading(false)
-  }, [isManager, page, typeFilter, userFilter, dateFilter])
+  }, [isManager, typeFilter, userFilter, dateFilter])
 
   useEffect(() => {
     if (authLoading || !isManager) return
@@ -172,14 +157,36 @@ export default function Activity() {
     [personMap]
   )
 
-  const groups = useMemo(
-    () => groupEntriesByDate(entries, { products, people }),
-    [entries, products, people]
-  )
+  // Build ALL visible (non-skipped) entries first, then paginate them client-side
+  const allVisible = useMemo(() => {
+    const opts = { products, people }
+    return entries.flatMap((entry) => {
+      const formatted = formatAuditEntry(entry, opts)
+      return formatted.skip ? [] : [{ entry, formatted }]
+    })
+  }, [entries, products, people])
 
+  const total = allVisible.length
   const totalPages = Math.ceil(total / PAGE_SIZE)
   const from = total === 0 ? 0 : page * PAGE_SIZE + 1
   const to = Math.min((page + 1) * PAGE_SIZE, total)
+
+  // Slice the visible entries for the current page, then group by date
+  const groups = useMemo(() => {
+    const pageEntries = allVisible.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+    const result = []
+    let currentLabel = null
+    for (const { entry, formatted } of pageEntries) {
+      const d = new Date(entry.created_at)
+      const label = isToday(d) ? 'Today' : isYesterday(d) ? 'Yesterday' : format(d, 'MMM d, yyyy')
+      if (label !== currentLabel) {
+        currentLabel = label
+        result.push({ label, entries: [] })
+      }
+      result[result.length - 1].entries.push({ entry, formatted })
+    }
+    return result
+  }, [allVisible, page])
 
   if (!authLoading && !isManager) {
     return (
@@ -205,6 +212,7 @@ export default function Activity() {
           <option value="products">Products</option>
           <option value="team">Team</option>
           <option value="contracts">Contracts</option>
+          <option value="events">Events</option>
         </Select>
 
         <Select value={userFilter} onChange={(e) => setUserFilter(e.target.value)} className="w-48">

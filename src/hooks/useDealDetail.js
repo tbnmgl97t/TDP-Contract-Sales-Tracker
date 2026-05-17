@@ -36,7 +36,7 @@ export function useDealDetail(id) {
     ] = await Promise.all([
       supabase.from('deals').select('*').eq('id', id).single(),
       supabase.from('deal_products').select('*, products(name, commission_metric, unit_label, is_support_charge, billing_frequency, rate_overridden)').eq('deal_id', id),
-      supabase.from('deal_team').select('*, people(name, role, email)').eq('deal_id', id),
+      supabase.from('deal_team').select('*, people(name, role, email, title, bio)').eq('deal_id', id),
       supabase.from('contracts').select('*, ai_analysis').eq('deal_id', id).order('uploaded_at', { ascending: false }),
       supabase.from('deal_partners').select('*, partners(name)').eq('deal_id', id).order('sort_order'),
       supabase.from('deal_amendments').select('*').eq('deal_id', id).order('effective_date'),
@@ -247,6 +247,7 @@ export function useDealDetail(id) {
     loading,
     currentUserId,
     load,
+    loadAuditLog,
     logEvent,
     handleStageChange,
     handleDelete,
