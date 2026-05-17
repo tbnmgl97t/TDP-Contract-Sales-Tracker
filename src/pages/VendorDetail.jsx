@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Pencil, Trash2, Upload, Eye, Download, FileText, ExternalLink, ScanSearch } from 'lucide-react'
+import { ArrowLeft, Plus, Pencil, Trash2, Upload, Eye, Download, FileText, ExternalLink, ScanSearch, RefreshCw, CheckCircle2 } from 'lucide-react'
 import VendorBrainPanel from '../components/vendor/VendorBrainPanel'
 import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
@@ -192,14 +192,17 @@ function DocRow({ doc, onView, onDownload, onDelete, onReanalyze, reanalyzing })
 }
 
 // ─── Contract card (with documents) ──────────────────────────────────────────
-function ContractCard({ contract: initialContract, vendorId, onEdit, onDelete, onDocsChanged }) {
-  const { profile } = useUser()
+function ContractCard({ contract: initialContract, vendorId, vendorName, onEdit, onDelete, onDocsChanged }) {
+  const { profile, isManager } = useUser()
   const [contract, setContract] = useState(initialContract)
   const [docs, setDocs] = useState([])
   const [uploading, setUploading] = useState(false)
   const [uploadingTermination, setUploadingTermination] = useState(false)
   const [extracting, setExtracting] = useState(false)
   const [deleteDoc, setDeleteDoc] = useState(null)
+  const [showRenewalForm, setShowRenewalForm] = useState(false)
+  const [renewalNote, setRenewalNote] = useState('')
+  const [savingRenewal, setSavingRenewal] = useState(false)
   const fileInputRef = useRef(null)
   const terminationFileInputRef = useRef(null)
 
@@ -295,6 +298,57 @@ function ContractCard({ contract: initialContract, vendorId, onEdit, onDelete, o
     loadDocs()
   }
 
+  async function logVendorActivity(description) {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      await supabase.from('audit_log').insert({
+        deal_id: null,
+        table_name: 'vendor_contracts',
+        record_id: contract.id,
+        action: 'event',
+        changed_by: user?.email || null,
+        description,
+      })
+    } catch (e) {
+      console.warn('[logVendorActivity]', e)
+    }
+  }
+
+  async function handleMarkRenewal() {
+    setSavingRenewal(true)
+    try {
+      const now = new Date().toISOString()
+      const updates = {
+        renewal_intent: true,
+        renewal_noted_by: profile?.email || profile?.full_name || 'Manager',
+        renewal_noted_at: now,
+        renewal_note: renewalNote.trim() || null,
+      }
+      await supabase.from('vendor_contracts').update(updates).eq('id', contract.id)
+      setContract((c) => ({ ...c, ...updates }))
+      await logVendorActivity(
+        `Renewal planned for contract "${contract.title}" (${vendorName})${renewalNote.trim() ? ` — "${renewalNote.trim()}"` : ''} by ${updates.renewal_noted_by}`
+      )
+      setShowRenewalForm(false)
+      setRenewalNote('')
+      onDocsChanged?.()
+    } finally {
+      setSavingRenewal(false)
+    }
+  }
+
+  async function handleClearRenewal() {
+    await supabase.from('vendor_contracts').update({
+      renewal_intent: false,
+      renewal_noted_by: null,
+      renewal_noted_at: null,
+      renewal_note: null,
+    }).eq('id', contract.id)
+    setContract((c) => ({ ...c, renewal_intent: false, renewal_noted_by: null, renewal_noted_at: null, renewal_note: null }))
+    await logVendorActivity(`Renewal plan cleared for contract "${contract.title}" (${vendorName}) by ${profile?.email || 'Manager'}`)
+    onDocsChanged?.()
+  }
+
   const meta = typeMeta(contract.contract_type)
   const today = new Date(); today.setHours(0, 0, 0, 0)
   const isTerminated = !!contract.end_date && new Date(contract.end_date) < today
@@ -310,21 +364,23 @@ function ContractCard({ contract: initialContract, vendorId, onEdit, onDelete, o
     notificationDate.setDate(notificationDate.getDate() - contract.notice_period_days)
     daysUntilNotification = Math.round((notificationDate - today) / (1000 * 60 * 60 * 24))
   }
-  const noticeActive = notificationDate !== null && daysUntilNotification <= 0 && !isTerminated
-  const noticeWarning = notificationDate !== null && daysUntilNotification > 0 && daysUntilNotification <= 60 && !isTerminated
+  const noticeActive = notificationDate !== null && daysUntilNotification <= 0 && !isTerminated && !contract.renewal_intent
+  const noticeWarning = notificationDate !== null && daysUntilNotification > 0 && daysUntilNotification <= 60 && !isTerminated && !contract.renewal_intent
   const isExpiring = noticeActive || noticeWarning
+  const renewalPlanned = !!contract.renewal_intent && !isTerminated && notificationDate !== null
 
   return (
-    <div className={`border rounded-2xl overflow-hidden ${isTerminated ? 'border-gray-200' : isExpiring ? 'border-amber-200' : 'border-gray-100'}`}>
+    <div className={`border rounded-2xl overflow-hidden ${isTerminated ? 'border-gray-200' : renewalPlanned ? 'border-green-200' : isExpiring ? 'border-amber-200' : 'border-gray-100'}`}>
       {/* Contract header */}
-      <div className={`flex items-start justify-between gap-3 px-4 py-3.5 ${isTerminated ? 'bg-gray-50' : isExpiring ? 'bg-amber-50/40' : 'bg-white'}`}>
+      <div className={`flex items-start justify-between gap-3 px-4 py-3.5 ${isTerminated ? 'bg-gray-50' : renewalPlanned ? 'bg-green-50/40' : isExpiring ? 'bg-amber-50/40' : 'bg-white'}`}>
         <div className="flex items-start gap-3 min-w-0">
-          <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${isTerminated ? 'bg-gray-100' : isExpiring ? 'bg-amber-50' : 'bg-primary-50'}`}>
-            <FileText size={16} className={isTerminated ? 'text-gray-400' : isExpiring ? 'text-amber-500' : 'text-primary-500'} />
+          <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${isTerminated ? 'bg-gray-100' : renewalPlanned ? 'bg-green-50' : isExpiring ? 'bg-amber-50' : 'bg-primary-50'}`}>
+            <FileText size={16} className={isTerminated ? 'text-gray-400' : renewalPlanned ? 'text-green-500' : isExpiring ? 'text-amber-500' : 'text-primary-500'} />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <p className={`text-sm font-semibold ${isTerminated ? 'text-gray-500' : 'text-navy-900'}`}>{contract.title}</p>
+              {renewalPlanned && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700"><CheckCircle2 size={10} /> Planned for Renewal</span>}
               <Badge color={meta.color}>{meta.label}</Badge>
               {isTerminated && <Badge color="red">Terminated</Badge>}
               {noticeActive && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-600">⚠ Notice period active</span>}
@@ -354,6 +410,87 @@ function ContractCard({ contract: initialContract, vendorId, onEdit, onDelete, o
           <button onClick={onDelete} className="p-1.5 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>
         </div>
       </div>
+
+      {/* Renewal intent banner — shown when warning is active OR renewal already planned */}
+      {(isExpiring || renewalPlanned) && (
+        <div className={`border-t px-4 py-3 ${renewalPlanned ? 'bg-green-50/60 border-green-100' : 'bg-amber-50/60 border-amber-100'}`}>
+          {renewalPlanned ? (
+            /* ── Renewal planned state ── */
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2 min-w-0">
+                <CheckCircle2 size={15} className="text-green-500 flex-shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-green-800">
+                    Renewal planned by {contract.renewal_noted_by}
+                    {contract.renewal_noted_at && (
+                      <span className="font-normal text-green-600 ml-1">
+                        · {format(new Date(contract.renewal_noted_at), 'MMM d, yyyy')}
+                      </span>
+                    )}
+                  </p>
+                  {contract.renewal_note && (
+                    <p className="text-xs text-green-700 mt-0.5 italic">"{contract.renewal_note}"</p>
+                  )}
+                </div>
+              </div>
+              {isManager && (
+                <button
+                  onClick={handleClearRenewal}
+                  className="text-xs text-green-600 hover:text-red-500 transition-colors flex-shrink-0 flex items-center gap-1"
+                  title="Clear renewal plan"
+                >
+                  <RefreshCw size={11} /> Clear
+                </button>
+              )}
+            </div>
+          ) : showRenewalForm ? (
+            /* ── Manager note form ── */
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-amber-800">Note renewal intention</p>
+              <textarea
+                value={renewalNote}
+                onChange={(e) => setRenewalNote(e.target.value)}
+                placeholder="Optional note (e.g. agreed to renew for 1 year at same rate)"
+                rows={2}
+                className="w-full text-xs border border-amber-200 rounded-lg px-2.5 py-1.5 bg-white resize-none focus:outline-none focus:ring-1 focus:ring-amber-400 placeholder:text-gray-400"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={handleMarkRenewal}
+                  disabled={savingRenewal}
+                  className="flex items-center gap-1.5 text-xs font-semibold bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  <CheckCircle2 size={12} />{savingRenewal ? 'Saving…' : 'Confirm Renewal Plan'}
+                </button>
+                <button
+                  onClick={() => { setShowRenewalForm(false); setRenewalNote('') }}
+                  className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1.5 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* ── Warning state — action prompt ── */
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs text-amber-700">
+                {noticeActive
+                  ? 'The notification window has passed — action required.'
+                  : `Notification deadline in ${daysUntilNotification} day${daysUntilNotification !== 1 ? 's' : ''}.`}
+                {!isManager && <span className="ml-1 text-amber-600">Contact a manager to record renewal intent.</span>}
+              </p>
+              {isManager && (
+                <button
+                  onClick={() => setShowRenewalForm(true)}
+                  className="flex-shrink-0 flex items-center gap-1.5 text-xs font-semibold bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  <CheckCircle2 size={12} /> Plan to Renew
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Documents */}
       <div className="border-t border-gray-50 bg-gray-50/60 px-4 py-3 space-y-4">
@@ -540,6 +677,7 @@ export default function VendorDetail() {
                 key={c.id}
                 contract={c}
                 vendorId={id}
+                vendorName={vendor?.name || ''}
                 onEdit={() => setContractModal(c)}
                 onDelete={() => setDeleteContract(c)}
                 onDocsChanged={load}
