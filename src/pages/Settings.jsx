@@ -5,7 +5,7 @@ import Card, { CardHeader } from '../components/ui/Card'
 import Button from '../components/ui/Button'
 import CommissionRateCard from '../components/settings/CommissionRateCard'
 import CommissionRulesCard from '../components/settings/CommissionRulesCard'
-import ProposalSlides from './ProposalSlides'
+import ProposalDefaultsCard from '../components/settings/ProposalDefaultsCard'
 
 const REMINDER_OPTIONS = [
   { days: 7, label: '7 days before' },
@@ -76,7 +76,6 @@ const OUTPUT_COST_PER_M = 15.0
 
 export default function Settings() {
   const [aiUsage, setAiUsage] = useState(null)
-  const [showSlides, setShowSlides] = useState(true)
 
   useEffect(() => {
     const now = new Date()
@@ -105,6 +104,8 @@ export default function Settings() {
       </div>
 
       <CommissionRateCard />
+
+      <ProposalDefaultsCard />
 
       {/* AI Usage */}
       <Card>
@@ -144,17 +145,7 @@ export default function Settings() {
         )}
       </Card>
 
-      {/* Proposal Slides */}
-      <Card>
-        <CardHeader
-          title="Proposal Slides"
-          subtitle="Manage slide templates used in deal proposals."
-          action={<Button variant="secondary" onClick={() => setShowSlides(!showSlides)}>{showSlides ? 'Hide' : 'Manage Slides'}</Button>}
-        />
-        {showSlides && <ProposalSlides />}
-      </Card>
-
-      <ReminderSettingsCard />
+<ReminderSettingsCard />
 
       <CommissionRulesCard />
     </div>

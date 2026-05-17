@@ -22,6 +22,8 @@ export function Badge({ children, color = 'gray', className }) {
     navy: 'bg-navy-100 text-navy-700',
     purple: 'bg-purple-100 text-purple-700',
     orange: 'bg-orange-100 text-orange-700',
+    teal:   'bg-teal-100 text-teal-700',
+    indigo: 'bg-indigo-100 text-indigo-700',
   }
   return (
     <span className={clsx('inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium', colors[color], className)}>

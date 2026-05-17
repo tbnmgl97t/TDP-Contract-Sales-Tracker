@@ -5,27 +5,54 @@ import { StageBadge } from '../components/ui/Badge'
 import { DEAL_STAGES } from '../lib/constants'
 import { fmt } from '../lib/commission'
 import { PageSpinner } from '../components/ui/Spinner'
+import { computeProductAcv, calcCancelledContributions } from '../lib/deals'
 
 const PAGE_MONTHS = 6
+const LATE_STAGES = ['proposal', 'negotiation', 'contracted']
 
 export default function Analytics() {
   const [deals, setDeals] = useState([])
+  const [dealAcvMap, setDealAcvMap] = useState({})
   const [loading, setLoading] = useState(true)
+  const [chartMode, setChartMode] = useState('created')
 
   useEffect(() => {
-    supabase
-      .from('deals')
-      .select('id, name, company_name, stage, acv, deal_type, created_at')
-      .is('deleted_at', null)
-      .then(({ data, error }) => {
-        if (error) {
-          return supabase.from('deals').select('id, name, company_name, stage, acv, deal_type, created_at')
-            .then(({ data: fallback }) => { setDeals(fallback || []); setLoading(false) })
+    async function load() {
+      const select = 'id, name, company_name, stage, acv, deal_type, created_at, contract_start, contract_months'
+      let { data, error } = await supabase.from('deals').select(select).is('deleted_at', null)
+      if (error) {
+        const { data: fallback } = await supabase.from('deals').select(select)
+        data = fallback || []
+      }
+      setDeals(data || [])
+
+      // Load products for late-stage deals to get accurate product-computed ACV
+      const lateIds = (data || []).filter((d) => LATE_STAGES.includes(d.stage)).map((d) => d.id)
+      if (lateIds.length > 0) {
+        const { data: products } = await supabase
+          .from('deal_products')
+          .select('deal_id, commission_metric, annual_value, yearly_cost, monthly_cost, net_revenue, cogs_amount, status, billing_months')
+          .in('deal_id', lateIds)
+
+        const dealMap = Object.fromEntries((data || []).map((d) => [d.id, d]))
+        const acvMap = {}
+        for (const id of lateIds) {
+          const dps = (products || []).filter((p) => p.deal_id === id)
+          const activeDps = dps.filter((p) => p.status !== 'cancelled')
+          const contractMonths = dealMap[id]?.contract_months || 12
+          const cancelled = calcCancelledContributions(dps, contractMonths)
+          acvMap[id] = computeProductAcv(activeDps) + cancelled.revenue
         }
-        setDeals(data || [])
-        setLoading(false)
-      })
+        setDealAcvMap(acvMap)
+      }
+
+      setLoading(false)
+    }
+    load()
   }, [])
+
+  // Use product-computed ACV for late-stage deals; fall back to manually entered for early stages
+  const dealAcv = (d) => dealAcvMap[d.id] ?? d.acv ?? 0
 
   const stats = useMemo(() => {
     const contracted = deals.filter((d) => d.stage === 'contracted')
@@ -33,24 +60,24 @@ export default function Analytics() {
     const active = deals.filter((d) => d.stage !== 'closed_lost' && d.stage !== 'contracted')
     const total = contracted.length + closedLost.length
     const winRate = total > 0 ? (contracted.length / total) * 100 : 0
-    const avgAcv = active.length > 0 ? active.reduce((s, d) => s + (d.acv || 0), 0) / active.length : 0
-    const pipeline = active.reduce((s, d) => s + (d.acv || 0), 0)
+    const pipeline = active.reduce((s, d) => s + dealAcv(d), 0)
+    const avgAcv = active.length > 0 ? pipeline / active.length : 0
 
     const now = new Date()
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-    const closedThisMonth = contracted.filter((d) => d.created_at && new Date(d.created_at) >= monthStart).length
+    const closedThisMonth = contracted.filter((d) => d.contract_start && new Date(d.contract_start + 'T12:00:00') >= monthStart).length
 
     return { winRate, avgAcv, pipeline, closedThisMonth, contracted: contracted.length, closedLost: closedLost.length, active: active.length }
-  }, [deals])
+  }, [deals, dealAcvMap])
 
   const stageData = useMemo(() =>
     DEAL_STAGES.map((s) => ({
       ...s,
       count: deals.filter((d) => d.stage === s.key).length,
-      value: deals.filter((d) => d.stage === s.key).reduce((sum, d) => sum + (d.acv || 0), 0),
-    })), [deals])
+      value: deals.filter((d) => d.stage === s.key).reduce((sum, d) => sum + dealAcv(d), 0),
+    })), [deals, dealAcvMap])
 
-  const monthlyData = useMemo(() => {
+  const monthlyCreated = useMemo(() => {
     const now = new Date()
     return Array.from({ length: PAGE_MONTHS }, (_, i) => {
       const d = new Date(now.getFullYear(), now.getMonth() - (PAGE_MONTHS - 1) + i, 1)
@@ -58,13 +85,31 @@ export default function Analytics() {
       const mo = d.getMonth()
       const count = deals.filter((deal) => {
         if (!deal.created_at) return false
-        const c = new Date(deal.created_at)
+        const c = new Date(deal.created_at) // created_at is a timestamptz — no shift needed
         return c.getFullYear() === yr && c.getMonth() === mo
       }).length
       return { label: d.toLocaleString('default', { month: 'short' }), yr, mo, count }
     })
   }, [deals])
 
+  const monthlyContracted = useMemo(() => {
+    const now = new Date()
+    return Array.from({ length: PAGE_MONTHS }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - (PAGE_MONTHS - 1) + i, 1)
+      const yr = d.getFullYear()
+      const mo = d.getMonth()
+      const match = (deal) => {
+        if (deal.stage !== 'contracted' || !deal.contract_start) return false
+        const c = new Date(deal.contract_start + 'T12:00:00') // local noon avoids UTC day-shift
+        return c.getFullYear() === yr && c.getMonth() === mo
+      }
+      const count = deals.filter(match).length
+      const acv = deals.filter(match).reduce((s, deal) => s + dealAcv(deal), 0)
+      return { label: d.toLocaleString('default', { month: 'short' }), yr, mo, count, acv }
+    })
+  }, [deals, dealAcvMap])
+
+  const monthlyData = chartMode === 'contracted' ? monthlyContracted : monthlyCreated
   const maxMonthCount = Math.max(...monthlyData.map((m) => m.count), 1)
 
   const topCompanies = useMemo(() => {
@@ -73,16 +118,16 @@ export default function Analytics() {
       const co = d.company_name || 'Unknown'
       if (!map[co]) map[co] = { name: co, count: 0, value: 0 }
       map[co].count++
-      map[co].value += d.acv || 0
+      map[co].value += dealAcv(d)
     })
     return Object.values(map).sort((a, b) => b.value - a.value).slice(0, 5)
-  }, [deals])
+  }, [deals, dealAcvMap])
 
   const typeBreakdown = useMemo(() => {
     const newDeals = deals.filter((d) => d.deal_type !== 'renewal' && d.stage !== 'closed_lost' && d.stage !== 'contracted')
     const renewals = deals.filter((d) => d.deal_type === 'renewal' && d.stage !== 'closed_lost' && d.stage !== 'contracted')
-    return { new: newDeals.length, renewals: renewals.length, newValue: newDeals.reduce((s, d) => s + (d.acv || 0), 0), renewalValue: renewals.reduce((s, d) => s + (d.acv || 0), 0) }
-  }, [deals])
+    return { new: newDeals.length, renewals: renewals.length, newValue: newDeals.reduce((s, d) => s + dealAcv(d), 0), renewalValue: renewals.reduce((s, d) => s + dealAcv(d), 0) }
+  }, [deals, dealAcvMap])
 
   const maxStageValue = Math.max(...stageData.map((s) => s.value), 1)
 
@@ -173,7 +218,28 @@ export default function Analytics() {
 
       {/* Monthly trend */}
       <Card>
-        <CardHeader title="Monthly Deal Activity" subtitle={`Deals created — past ${PAGE_MONTHS} months`} />
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <p className="text-sm font-semibold text-navy-900">Monthly Deal Activity</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {chartMode === 'created' ? `Deals added to pipeline — past ${PAGE_MONTHS} months` : `Contracts started — past ${PAGE_MONTHS} months`}
+            </p>
+          </div>
+          <div className="flex items-center bg-gray-100 rounded-lg p-0.5 flex-shrink-0">
+            <button
+              onClick={() => setChartMode('created')}
+              className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${chartMode === 'created' ? 'bg-white text-navy-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+            >
+              Created
+            </button>
+            <button
+              onClick={() => setChartMode('contracted')}
+              className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${chartMode === 'contracted' ? 'bg-white text-navy-900 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+            >
+              Contracted
+            </button>
+          </div>
+        </div>
         <div className="flex items-end gap-3 h-32 pt-2">
           {monthlyData.map((m) => {
             const heightPct = maxMonthCount > 0 ? (m.count / maxMonthCount) * 100 : 0
@@ -186,7 +252,9 @@ export default function Analytics() {
                   />
                 </div>
                 <p className="text-xs text-gray-500 font-medium">{m.label}</p>
-                <p className="text-xs text-gray-400">{m.count}</p>
+                <p className="text-xs text-gray-400">
+                  {chartMode === 'contracted' && m.acv > 0 ? fmt(m.acv, 0) : m.count}
+                </p>
               </div>
             )
           })}

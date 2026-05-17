@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { useUser } from '../../contexts/UserContext'
 import Card, { CardHeader } from '../ui/Card'
 import Button from '../ui/Button'
+import Modal from '../ui/Modal'
 import RichTextEditor from '../ui/RichTextEditor'
 
 const NOTE_TYPES = [
@@ -24,8 +25,157 @@ function NoteTypeIcon({ type, size = 13 }) {
   )
 }
 
+function getPreview(html) {
+  const text = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+  return text.length > 120 ? text.slice(0, 120) + '…' : text
+}
+
+const EDIT_WINDOW_MS = 3 * 60 * 1000 // 3 minutes
+
+function useSecondsLeft(createdAt) {
+  const elapsed = () => Math.max(0, EDIT_WINDOW_MS - (Date.now() - new Date(createdAt).getTime()))
+  const [msLeft, setMsLeft] = useState(elapsed)
+  useEffect(() => {
+    if (elapsed() <= 0) return
+    const t = setInterval(() => {
+      const left = elapsed()
+      setMsLeft(left)
+      if (left <= 0) clearInterval(t)
+    }, 1000)
+    return () => clearInterval(t)
+  }, [createdAt])
+  return Math.ceil(msLeft / 1000)
+}
+
+function NoteRow({ note, linkedAction, isLast, onToggleAction, onUpdated, isManager }) {
+  const [open, setOpen]           = useState(false)
+  const [editing, setEditing]     = useState(false)
+  const [editContent, setEdit]    = useState(note.content)
+  const [saving, setSaving]       = useState(false)
+  const [confirmDel, setConfirmDel] = useState(false)
+
+  const t = NOTE_TYPES.find((n) => n.key === note.note_type) || NOTE_TYPES[0]
+  const preview = getPreview(note.content || '')
+  const secsLeft = useSecondsLeft(note.created_at)
+  const withinWindow = secsLeft > 0
+  const canEdit = withinWindow   // edit only within window
+  const canDelete = withinWindow || isManager  // managers can always delete
+
+  async function handleSave() {
+    const stripped = editContent.replace(/<[^>]*>/g, '').trim()
+    if (!stripped) return
+    setSaving(true)
+    await supabase.from('deal_notes').update({ content: editContent.trim() }).eq('id', note.id)
+    setSaving(false)
+    setEditing(false)
+    onUpdated()
+  }
+
+  async function handleDelete() {
+    await supabase.from('deal_notes').delete().eq('id', note.id)
+    setOpen(false)
+    onUpdated()
+  }
+
+  function handleClose() {
+    setOpen(false)
+    setEditing(false)
+    setEdit(note.content)
+    setConfirmDel(false)
+  }
+
+  const minsLeft = Math.floor(secsLeft / 60)
+  const s = secsLeft % 60
+  const countdown = `${minsLeft}:${String(s).padStart(2, '0')}`
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className={`w-full flex items-start gap-3 py-3 text-left hover:bg-gray-50 -mx-1 px-1 rounded-lg transition-colors ${!isLast ? 'border-b border-gray-50' : ''}`}
+      >
+        <NoteTypeIcon type={note.note_type} />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm text-navy-900 truncate leading-snug">{preview}</p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {note.created_by ? <span className="font-medium text-gray-500">{note.created_by.split('@')[0]}</span> : null}
+            {note.created_by ? ' · ' : ''}
+            {format(new Date(note.created_at), 'MMM d, yyyy · h:mm a')}
+            {linkedAction && (
+              <span className="ml-2 inline-flex items-center gap-0.5">
+                · <Circle size={9} className="inline text-gray-300" /> {linkedAction.title}
+              </span>
+            )}
+          </p>
+        </div>
+      </button>
+
+      <Modal open={open} onClose={handleClose} title={t.label} size="md">
+        <div className="space-y-4">
+
+          {editing ? (
+            <>
+              <RichTextEditor value={editContent} onChange={setEdit} placeholder="Edit note…" />
+              <div className="flex gap-2 justify-end">
+                <Button variant="secondary" size="sm" onClick={() => { setEditing(false); setEdit(note.content) }}>Cancel</Button>
+                <Button size="sm" loading={saving} onClick={handleSave} disabled={!editContent.replace(/<[^>]*>/g, '').trim()}>Save</Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div
+                className="prose prose-sm max-w-none text-navy-900 [&_ul]:pl-5 [&_ul]:list-disc [&_ol]:pl-5 [&_ol]:list-decimal [&_p]:my-0.5 [&_li]:my-0"
+                dangerouslySetInnerHTML={{ __html: note.content }}
+              />
+
+              {linkedAction && (
+                <div className="flex items-center gap-2 pt-3 border-t border-gray-100">
+                  <button
+                    onClick={() => onToggleAction(linkedAction)}
+                    className={`transition-colors flex-shrink-0 ${linkedAction.completed_at ? 'text-primary-400' : 'text-gray-300 hover:text-primary-400'}`}
+                  >
+                    {linkedAction.completed_at ? <CheckCircle2 size={15} /> : <Circle size={15} />}
+                  </button>
+                  <span className={`text-sm ${linkedAction.completed_at ? 'line-through text-gray-400' : 'text-gray-700'}`}>{linkedAction.title}</span>
+                  <span className="text-xs text-gray-400 ml-auto">Due {format(new Date(linkedAction.due_date + 'T00:00:00'), 'MMM d')}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between pt-2 border-t border-gray-50">
+                <p className="text-xs text-gray-400">
+                  {note.created_by ? <span className="font-medium text-gray-500">{note.created_by.split('@')[0]}</span> : null}
+                  {note.created_by ? ' · ' : ''}
+                  {format(new Date(note.created_at), 'MMM d, yyyy · h:mm a')}
+                </p>
+
+                {(canEdit || canDelete) && (
+                  <div className="flex items-center gap-2">
+                    {withinWindow && <span className="text-[10px] text-gray-300 tabular-nums">{countdown}</span>}
+                    {confirmDel ? (
+                      <>
+                        <span className="text-xs text-red-500">Delete?</span>
+                        <button onClick={handleDelete} className="text-xs font-medium text-red-600 hover:text-red-700">Yes</button>
+                        <button onClick={() => setConfirmDel(false)} className="text-xs text-gray-400 hover:text-gray-600">No</button>
+                      </>
+                    ) : (
+                      <>
+                        {canEdit && <button onClick={() => setEditing(true)} className="text-xs font-medium text-gray-400 hover:text-navy-900 transition-colors">Edit</button>}
+                        {canDelete && <button onClick={() => setConfirmDel(true)} className="text-xs font-medium text-gray-400 hover:text-red-600 transition-colors">Delete</button>}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </Modal>
+    </>
+  )
+}
+
 export default function DealNotesCard({ dealId }) {
-  const { profile } = useUser()
+  const { profile, isManager } = useUser()
   const [notes, setNotes]         = useState([])
   const [actions, setActions]     = useState([])
   const [loading, setLoading]     = useState(true)
@@ -206,39 +356,17 @@ export default function DealNotesCard({ dealId }) {
         <p className="text-sm text-gray-400 text-center py-6">No notes yet. Log a call, email, or meeting above.</p>
       ) : (
         <div className="space-y-0">
-          {notes.map((note, i) => {
-            const linkedAction = actions.find((a) => a.note_id === note.id)
-            return (
-              <div key={note.id} className={`flex gap-3 py-3 ${i < notes.length - 1 ? 'border-b border-gray-50' : ''}`}>
-                <NoteTypeIcon type={note.note_type} />
-                <div className="flex-1 min-w-0">
-                  <div
-                    className="prose prose-sm max-w-none text-navy-900 [&_ul]:pl-5 [&_ul]:list-disc [&_ol]:pl-5 [&_ol]:list-decimal [&_p]:my-0.5 [&_li]:my-0"
-                    dangerouslySetInnerHTML={{ __html: note.content }}
-                  />
-                  {linkedAction && (
-                    <div className="flex items-center gap-1.5 mt-1.5">
-                      <button
-                        onClick={() => toggleComplete(linkedAction)}
-                        className={`transition-colors flex-shrink-0 ${linkedAction.completed_at ? 'text-primary-400' : 'text-gray-300 hover:text-primary-400'}`}
-                      >
-                        {linkedAction.completed_at ? <CheckCircle2 size={13} /> : <Circle size={13} />}
-                      </button>
-                      <span className={`text-xs ${linkedAction.completed_at ? 'line-through text-gray-400' : 'text-gray-600'}`}>
-                        {linkedAction.title}
-                      </span>
-                      <span className="text-xs text-gray-400">· {format(new Date(linkedAction.due_date + 'T00:00:00'), 'MMM d')}</span>
-                    </div>
-                  )}
-                  <p className="text-xs text-gray-400 mt-1">
-                    {note.created_by ? <span className="font-medium text-gray-500">{note.created_by.split('@')[0]}</span> : null}
-                    {note.created_by ? ' · ' : ''}
-                    {format(new Date(note.created_at), 'MMM d, yyyy · h:mm a')}
-                  </p>
-                </div>
-              </div>
-            )
-          })}
+          {notes.map((note, i) => (
+            <NoteRow
+              key={note.id}
+              note={note}
+              linkedAction={actions.find((a) => a.note_id === note.id)}
+              isLast={i === notes.length - 1}
+              onToggleAction={toggleComplete}
+              onUpdated={load}
+              isManager={isManager}
+            />
+          ))}
         </div>
       )}
 

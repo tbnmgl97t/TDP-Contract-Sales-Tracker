@@ -1,3 +1,4 @@
+import React from 'react'
 import { ChevronRight, TrendingUp, TrendingDown } from 'lucide-react'
 import { fmt } from '../../lib/commission'
 import { productLineTotal, resolveMonthlyValue } from '../../lib/products'
@@ -74,17 +75,20 @@ export default function DealProductsTable({ dealProducts, amendments, deal, cust
             const cancellationAmendment = isCancelled && dp.cancellation_amendment_id
               ? amendments.find((a) => a.id === dp.cancellation_amendment_id)
               : null
+            const isUsageBased = !!prod?.is_usage_based
             const lineTotal = productLineTotal(dp, partnerMultiplier)
             const monthlyVal = resolveMonthlyValue(dp, partnerMultiplier)
             const monthlyCell = isGM && !isSupport
-              ? fmtQty(dp.monthly_quantity || dp.quantity)
+              ? (isUsageBased
+                  ? fmtQty(dp.monthly_quantity || dp.quantity)
+                  : (lineTotal > 0 ? fmt(lineTotal / 12, 2) : '—'))
               : monthlyVal != null ? fmt(monthlyVal, 2) : '—'
             const activeMonths = isCancelled ? (dp.billing_months ?? contractMonths) : contractMonths
             const paidAmount = isCancelled ? lineTotal * (activeMonths / contractMonths) : lineTotal
 
             return (
-              <>
-                <tr key={dp.id} className={`${hasMilestones ? 'border-b-0' : ''} ${isCancelled ? 'opacity-60' : ''}`}>
+              <React.Fragment key={dp.id}>
+                <tr className={`${hasMilestones ? 'border-b-0' : ''} ${isCancelled ? 'opacity-60' : ''}`}>
                   <td className="py-3 font-medium text-navy-900">
                     <span className={isCancelled ? 'line-through text-gray-400' : ''}>{prod?.name}</span>
                     {!isCancelled && !isGM && listPrice?.unit_price != null && dp.unit_price_snapshot != null && (
@@ -143,7 +147,7 @@ export default function DealProductsTable({ dealProducts, amendments, deal, cust
                     <td className="py-2 text-right text-xs font-medium text-gray-600 hidden md:table-cell">{fmt(productLineTotal({ ...dp, total_revenue: parseFloat(m.amount) || 0 }, partnerMultiplier), 2)}</td>
                   </tr>
                 ))}
-              </>
+              </React.Fragment>
             )
           })}
           <tr className="border-t-2 border-gray-200">

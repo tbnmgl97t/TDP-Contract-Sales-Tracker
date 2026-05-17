@@ -117,6 +117,30 @@ export function calcEstimatedCommission(acv, rate) {
   return (acv || 0) * ((rate || 0) / 100)
 }
 
+/**
+ * Prorated revenue + COGS contribution from cancelled products.
+ *
+ * Cancelled products are excluded from active ACV but still generated
+ * revenue for the months they were active. This function accumulates
+ * those prorated amounts so they can be added back to deal totals.
+ *
+ * @param {array}  dealProducts   — full product list (all statuses)
+ * @param {number} contractMonths — deal contract length in months (default 12)
+ * @returns {{ revenue: number, cogs: number }}
+ */
+export function calcCancelledContributions(dealProducts, contractMonths = 12) {
+  return (dealProducts || [])
+    .filter((dp) => dp.status === 'cancelled')
+    .reduce((acc, dp) => {
+      const activeMonths = dp.billing_months ?? contractMonths
+      const ratio = activeMonths / contractMonths
+      return {
+        revenue: acc.revenue + resolveProductValue(dp) * ratio,
+        cogs:    acc.cogs    + effectiveCogs(dp) * ratio,
+      }
+    }, { revenue: 0, cogs: 0 })
+}
+
 // ---------------------------------------------------------------------------
 // Date / schedule helpers
 // ---------------------------------------------------------------------------

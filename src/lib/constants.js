@@ -5,10 +5,14 @@ export const DEAL_STAGES = [
   { key: 'proposal', label: 'Proposal', color: 'bg-accent-100 text-accent-700', dot: 'bg-accent-400' },
   { key: 'negotiation', label: 'Negotiation', color: 'bg-orange-100 text-orange-700', dot: 'bg-orange-500' },
   { key: 'contracted', label: 'Contracted', color: 'bg-primary-100 text-primary-700', dot: 'bg-primary-400' },
+  { key: 'closed_won', label: 'Closed', color: 'bg-gray-100 text-gray-500', dot: 'bg-gray-400' },
   { key: 'closed_lost', label: 'Closed Lost', color: 'bg-red-100 text-red-700', dot: 'bg-red-500' },
 ]
 
-export const DEAL_STAGE_ORDER = ['lead', 'qualified', 'discovery', 'proposal', 'negotiation', 'contracted', 'closed_lost']
+export const DEAL_STAGE_ORDER = ['lead', 'qualified', 'discovery', 'proposal', 'negotiation', 'contracted', 'closed_won', 'closed_lost']
+
+// Stages hidden from Kanban (terminal states that clutter the board)
+export const KANBAN_HIDDEN_STAGES = ['closed_won', 'closed_lost']
 
 export const COMMISSION_METRICS = [
   { value: 'NAVC/RAV', label: 'NAVC/RAV — Annual Contract Value' },
@@ -16,9 +20,10 @@ export const COMMISSION_METRICS = [
 ]
 
 export const PERSON_ROLES = [
-  { value: 'sales', label: 'Sales (Commission eligible)' },
-  { value: 'support', label: 'Support (SPIF eligible)' },
+  { value: 'sales',      label: 'Sales (Commission eligible)' },
+  { value: 'support',    label: 'Support (SPIF eligible)' },
   { value: 'management', label: 'Management' },
+  { value: 'partner',    label: 'Partner' },
 ]
 
 export const DEAL_TYPES = [

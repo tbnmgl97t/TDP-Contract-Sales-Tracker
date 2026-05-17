@@ -29,7 +29,7 @@ export default function Products() {
   async function load() {
     const [{ data: prods }, { data: vens }, { data: cats }, { data: settings }] = await Promise.all([
       supabase.from('products').select('*, vendors(name), categories(name)').order('name'),
-      supabase.from('vendors').select('*').order('name'),
+      supabase.from('vendors').select('*').eq('show_in_products', true).order('name'),
       supabase.from('categories').select('*').order('name'),
       supabase.from('commission_settings').select('global_commission_rate').eq('id', 1).single(),
     ])

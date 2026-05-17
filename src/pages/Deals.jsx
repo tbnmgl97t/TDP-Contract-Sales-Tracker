@@ -1,19 +1,19 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, LayoutList, Columns, ChevronRight, Trash2, RotateCcw, ChevronLeft, ChevronRight as ChevronRightIcon, CheckCircle2, Clock } from 'lucide-react'
+import { Plus, LayoutList, Columns, ChevronRight, Trash2, RotateCcw, ChevronLeft, ChevronRight as ChevronRightIcon, CheckCircle2, Clock, RefreshCw } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import Card from '../components/ui/Card'
 import { StageBadge } from '../components/ui/Badge'
 import Button from '../components/ui/Button'
 import SearchBar from '../components/ui/SearchBar'
 import EmptyState from '../components/ui/EmptyState'
-import { DEAL_STAGES } from '../lib/constants'
+import { DEAL_STAGES, KANBAN_HIDDEN_STAGES } from '../lib/constants'
 import { fmt } from '../lib/commission'
 import { computeProductAcv } from '../lib/deals'
 import { getMarginTier, calcCogsFromMarginPct } from '../lib/margin'
 import { PageSpinner } from '../components/ui/Spinner'
 import { clsx } from 'clsx'
-import { format } from 'date-fns'
+import { format, differenceInDays, parseISO } from 'date-fns'
 
 const PAGE_SIZE = 25
 
@@ -41,7 +41,16 @@ function DealCard({ deal, onClick }) {
         </div>
         <ChevronRight size={14} className="text-gray-300 group-hover:text-primary-400 flex-shrink-0 mt-0.5 transition-colors" />
       </div>
-      <p className="text-xs text-gray-500 truncate">{deal.company_name}</p>
+      <div className="flex items-center gap-2 mt-0.5">
+        <p className="text-xs text-gray-500 truncate">{deal.company_name}</p>
+        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0 ${
+          deal.deal_type === 'renewal'
+            ? 'bg-teal-50 text-teal-700 ring-1 ring-teal-200'
+            : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'
+        }`}>
+          {deal.deal_type || 'new'}
+        </span>
+      </div>
       {!['proposal', 'contracted'].includes(deal.stage) && deal._qStatus === 'submitted' && (
         <div className="flex items-center gap-1 mt-1.5 mb-1">
           <CheckCircle2 size={11} className="text-green-500 flex-shrink-0" />
@@ -54,18 +63,38 @@ function DealCard({ deal, onClick }) {
           <span className="text-xs text-blue-500 font-medium">Questionnaire sent</span>
         </div>
       )}
-      <div className={`flex items-end justify-between gap-2 ${deal._qStatus ? 'mt-1.5' : 'mt-3'}`}>
+      {/* Renewal context for contracted deals — hidden once renewal is contracted */}
+      {deal._daysLeft != null && deal._daysLeft <= 90 && !deal._fullyRenewed && (
+        <div className={`flex items-center gap-1.5 mt-2 text-xs font-medium ${
+          deal._hasRenewal
+            ? 'text-primary-500'
+            : deal._daysLeft <= 30 ? 'text-red-500' : 'text-amber-500'
+        }`}>
+          <RefreshCw size={10} className="flex-shrink-0" />
+          {deal._hasRenewal
+            ? 'Renewal in progress'
+            : deal._daysLeft <= 0 ? 'Contract expired'
+            : `Renews in ${deal._daysLeft}d`}
+        </div>
+      )}
+      <div className={`flex items-end justify-between gap-2 ${(deal._qStatus || (deal._daysLeft != null && deal._daysLeft <= 90)) ? 'mt-1.5' : 'mt-3'}`}>
         <div>
-          <p className="text-xs text-gray-400 leading-none mb-0.5">Est. Trilogy Margin</p>
-          <span className="text-sm font-bold text-navy-900">{fmt(deal.acv, 2)}</span>
+          <p className="text-xs text-gray-400 leading-none mb-0.5">
+            {deal._margin != null ? 'Trilogy Margin' : 'Est. ACV'}
+          </p>
+          <span className="text-sm font-bold text-navy-900">
+            {fmt(deal._margin ?? deal.acv ?? 0, 2)}
+          </span>
           {deal._actualAcv != null && (
-            <p className="text-xs text-teal-600 font-medium mt-0.5">Actual ACV {fmt(deal._actualAcv, 2)}</p>
+            <p className="text-xs text-teal-600 font-medium mt-0.5">ACV {fmt(deal._actualAcv, 2)}</p>
           )}
           {deal._proposedAcv != null && deal._proposedAcv > 0 && (
             <p className="text-xs text-primary-500 font-medium mt-0.5">Proposed ACV {fmt(deal._proposedAcv, 2)}</p>
           )}
+          {deal._margin == null && deal._actualAcv == null && deal._proposedAcv == null && deal.acv == null && (
+            <p className="text-xs text-gray-400 mt-0.5">No products yet</p>
+          )}
         </div>
-        <span className="text-xs text-gray-400 self-start">{deal.deal_type || 'new'}</span>
       </div>
     </button>
   )
@@ -81,7 +110,7 @@ function KanbanView({ deals, onDealClick, onStageChange }) {
 
   return (
     <div className="flex gap-4 overflow-x-auto pb-4 min-h-[70vh]">
-      {DEAL_STAGES.map((stage) => {
+      {DEAL_STAGES.filter((s) => !KANBAN_HIDDEN_STAGES.includes(s.key)).map((stage) => {
         const stageDeals = deals.filter((d) => d.stage === stage.key)
         const stageValue = stageDeals.reduce((s, d) => s + (d.acv || 0), 0)
         return (
@@ -142,7 +171,15 @@ function ListView({ deals, onDealClick, page, setPage }) {
                   </td>
                   <td className="px-4 py-3.5 hidden sm:table-cell text-gray-600 truncate max-w-[160px]">{deal.company_name}</td>
                   <td className="px-4 py-3.5 hidden md:table-cell"><StageBadge stage={deal.stage} /></td>
-                  <td className="px-4 py-3.5 hidden md:table-cell text-gray-500 capitalize">{deal.deal_type || 'new'}</td>
+                  <td className="px-4 py-3.5 hidden md:table-cell">
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                      deal.deal_type === 'renewal'
+                        ? 'bg-teal-50 text-teal-700 ring-1 ring-teal-200'
+                        : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'
+                    }`}>
+                      {deal.deal_type || 'new'}
+                    </span>
+                  </td>
                   <td className="px-4 py-3.5 text-right">
                     <p className="text-xs text-gray-400">Est. {fmt(deal.acv, 2)}</p>
                     {deal._actualAcv != null && (
@@ -287,13 +324,13 @@ export default function Deals() {
   async function load() {
     let { data, error } = await supabase
       .from('deals')
-      .select('id, name, company_name, stage, deal_type, acv, total_contract_value, contract_start, contract_months')
+      .select('id, name, company_name, stage, deal_type, acv, total_contract_value, contract_start, contract_months, contract_end')
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
     if (error) {
       const { data: fallback } = await supabase
         .from('deals')
-        .select('id, name, company_name, stage, deal_type, acv, total_contract_value, contract_start, contract_months')
+        .select('id, name, company_name, stage, deal_type, acv, total_contract_value, contract_start, contract_months, contract_end')
         .order('created_at', { ascending: false })
       data = fallback
     }
@@ -301,13 +338,17 @@ export default function Deals() {
     const { data: approvals } = await supabase.from('deal_approvals').select('deal_id, status, margin_pct')
     const approvalMap = Object.fromEntries((approvals || []).map((a) => [a.deal_id, a]))
 
-    // Fetch computed ACV from products for contracted + proposal deals
-    const productDealIds = (data || []).filter((d) => d.stage === 'contracted' || d.stage === 'proposal').map((d) => d.id)
+    // Fetch products for deals likely to have meaningful data:
+    // contracted, proposal, negotiation, and any renewal deal (all stages)
+    const productDealIds = (data || [])
+      .filter((d) => ['contracted', 'proposal', 'negotiation'].includes(d.stage) || d.deal_type === 'renewal')
+      .map((d) => d.id)
     let computedAcvMap = {}
+    let computedMarginMap = {}
     if (productDealIds.length > 0) {
       const { data: products } = await supabase
         .from('deal_products')
-        .select('deal_id, commission_metric, annual_value, yearly_cost, net_revenue, cogs_amount, monthly_cost')
+        .select('deal_id, commission_metric, annual_value, yearly_cost, net_revenue, cogs_amount, monthly_cost, status')
         .in('deal_id', productDealIds)
       const productsByDeal = {}
       ;(products || []).forEach((p) => {
@@ -315,7 +356,17 @@ export default function Deals() {
         productsByDeal[p.deal_id].push(p)
       })
       productDealIds.forEach((dealId) => {
-        computedAcvMap[dealId] = computeProductAcv(productsByDeal[dealId] || [])
+        const dps = (productsByDeal[dealId] || []).filter((p) => p.status !== 'cancelled')
+        if (dps.length > 0) {
+          computedAcvMap[dealId] = computeProductAcv(dps)
+          computedMarginMap[dealId] = dps.reduce((sum, p) => {
+            // Use stored net_revenue if available, otherwise derive from revenue − COGS
+            if (p.net_revenue != null) return sum + p.net_revenue
+            const revenue = p.total_revenue || p.annual_value || p.yearly_cost || 0
+            const cogs = p.cogs_amount || 0
+            return sum + Math.max(0, revenue - cogs)
+          }, 0)
+        }
       })
     }
 
@@ -337,11 +388,67 @@ export default function Deals() {
       })
     }
 
+    // Auto-close expired contracted deals (contract_end in the past, no active renewal)
+    const expiredDeals = (data || []).filter((d) =>
+      d.stage === 'contracted' && d.contract_end &&
+      differenceInDays(parseISO(d.contract_end), new Date()) < 0
+    )
+    if (expiredDeals.length > 0) {
+      const expiredIds = expiredDeals.map((d) => d.id)
+      // Only close ones that don't have an active renewal in progress
+      const { data: activeRenewals } = await supabase
+        .from('deals')
+        .select('predecessor_deal_id')
+        .in('predecessor_deal_id', expiredIds)
+        .is('deleted_at', null)
+      const hasActiveRenewal = new Set((activeRenewals || []).map((r) => r.predecessor_deal_id).filter(Boolean))
+      const toClose = expiredDeals.filter((d) => !hasActiveRenewal.has(d.id)).map((d) => d.id)
+      if (toClose.length > 0) {
+        await supabase.from('deals').update({ stage: 'closed_won' }).in('id', toClose)
+        // Update in-memory data too
+        data = data.map((d) => toClose.includes(d.id) ? { ...d, stage: 'closed_won' } : d)
+      }
+    }
+
+    // Load renewal status for contracted deals
+    // - "in progress" = renewal deal exists but isn't contracted yet
+    // - once renewal reaches contracted, stop showing anything (renewal is complete)
+    const contractedIds = (data || []).filter((d) => d.stage === 'contracted').map((d) => d.id)
+    let renewedDealIds = new Set()    // renewal in progress (not yet contracted)
+    let fullyRenewedIds = new Set()   // renewal is contracted → hide all context
+    if (contractedIds.length > 0) {
+      const { data: renewals } = await supabase
+        .from('deals')
+        .select('predecessor_deal_id, stage')
+        .in('predecessor_deal_id', contractedIds)
+        .is('deleted_at', null)
+      ;(renewals || []).forEach((r) => {
+        if (!r.predecessor_deal_id) return
+        if (r.stage === 'contracted') fullyRenewedIds.add(r.predecessor_deal_id)
+        else renewedDealIds.add(r.predecessor_deal_id)
+      })
+    }
+
     const dealsWithTier = (data || []).map((d) => {
       const appr = approvalMap[d.id]
       const tier = appr?.margin_pct != null ? getMarginTier(d.acv, calcCogsFromMarginPct(d.acv, appr.margin_pct)) : null
       const computedAcv = computedAcvMap[d.id] ?? null
-      return { ...d, _tier: tier, _approval: appr, _actualAcv: d.stage === 'contracted' ? computedAcv : null, _proposedAcv: d.stage === 'proposal' ? computedAcv : null, _qStatus: qStatusMap[d.id] ?? null }
+      const computedMargin = computedMarginMap[d.id] ?? null
+      const daysLeft = d.stage === 'contracted' && d.contract_end
+        ? differenceInDays(parseISO(d.contract_end), new Date())
+        : null
+      return {
+        ...d,
+        _tier: tier,
+        _approval: appr,
+        _actualAcv: d.stage === 'contracted' ? computedAcv : null,
+        _proposedAcv: d.stage === 'proposal' ? computedAcv : null,
+        _margin: computedMargin,
+        _qStatus: qStatusMap[d.id] ?? null,
+        _daysLeft: daysLeft,
+        _hasRenewal: renewedDealIds.has(d.id),
+        _fullyRenewed: fullyRenewedIds.has(d.id),
+      }
     })
     setDeals(dealsWithTier)
     setLoading(false)

@@ -7,16 +7,18 @@ import Card, { CardHeader } from '../components/ui/Card'
 import { StageBadge } from '../components/ui/Badge'
 import { DEAL_STAGES } from '../lib/constants'
 import { fmt } from '../lib/commission'
-import { calcTotalCommission, calcTotalSpif, calcTotalPayout, calcTrilogyNet } from '../lib/deals'
+import { calcTotalCommission, calcTotalSpif, calcTotalPayout, calcTrilogyNet, computeProductAcv, calcCancelledContributions } from '../lib/deals'
+import { getMarginPct } from '../lib/margin'
 import { PageSpinner } from '../components/ui/Spinner'
 import { useUser } from '../contexts/UserContext'
 import EstimatorModal from '../components/EstimatorModal'
+import Modal from '../components/ui/Modal'
 
 const RENEWAL_WINDOW_DAYS = 90
 
 const LATE_STAGES = ['proposal', 'negotiation', 'contracted']
 
-function StatCard({ label, value, sub, icon: Icon, color, onClick }) {
+function StatCard({ label, value, sub, icon: Icon, color, onClick, clickLabel = 'View details →' }) {
   const inner = (
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0">
@@ -34,7 +36,7 @@ function StatCard({ label, value, sub, icon: Icon, color, onClick }) {
     return (
       <button onClick={onClick} className="w-full text-left rounded-2xl bg-white border border-gray-100 p-4 hover:border-primary-300 hover:shadow-sm transition-all">
         {inner}
-        <p className="text-xs text-primary-500 mt-2 font-medium">View estimator →</p>
+        <p className="text-xs text-primary-500 mt-2 font-medium">{clickLabel}</p>
       </button>
     )
   }
@@ -48,6 +50,7 @@ export default function Dashboard() {
   const [dealFinancials, setDealFinancials] = useState({})
   const [estRate, setEstRate] = useState(7)
   const [showEstimator, setShowEstimator] = useState(false)
+  const [showContracted, setShowContracted] = useState(false)
   const [renewedDealIds, setRenewedDealIds] = useState(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -58,13 +61,13 @@ export default function Dashboard() {
     async function load() {
       let { data, error: err } = await supabase
         .from('deals')
-        .select('id, name, company_name, stage, acv, total_contract_value, created_at, contract_end')
+        .select('id, name, company_name, stage, acv, total_contract_value, contract_months, created_at, contract_end')
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
       if (err) {
         const { data: fallback, error: err2 } = await supabase
           .from('deals')
-          .select('id, name, company_name, stage, acv, total_contract_value, created_at, contract_end')
+          .select('id, name, company_name, stage, acv, total_contract_value, contract_months, created_at, contract_end')
           .order('created_at', { ascending: false })
         if (err2) { setError('Failed to load dashboard data. Please refresh.'); setLoading(false); return }
         data = fallback
@@ -95,24 +98,24 @@ export default function Dashboard() {
         if (lateIds.length > 0) {
           const [{ data: products }, { data: team }] = await Promise.all([
             supabase.from('deal_products')
-              .select('deal_id, commission_metric, annual_value, yearly_cost, net_revenue, cogs_amount, commission_amount')
+              .select('deal_id, commission_metric, annual_value, yearly_cost, monthly_cost, net_revenue, cogs_amount, commission_amount, status, billing_months')
               .in('deal_id', lateIds),
             supabase.from('deal_team')
               .select('deal_id, role, spif_amount')
               .in('deal_id', contractedIds),
           ])
 
+          const dealMap = Object.fromEntries((data || []).map((d) => [d.id, d]))
           const finMap = {}
           for (const id of lateIds) {
             const dps = (products || []).filter((p) => p.deal_id === id)
-            const dealAcv = dps.reduce((s, p) => {
-              if (p.commission_metric === 'GM') return s + (p.yearly_cost || ((p.net_revenue || 0) + (p.cogs_amount || 0)))
-              return s + (p.annual_value || 0)
-            }, 0)
+            const activeDps = dps.filter((p) => p.status !== 'cancelled')
+            const contractMonths = dealMap[id]?.contract_months || 12
+            const cancelled = calcCancelledContributions(dps, contractMonths)
             finMap[id] = {
               commission: calcTotalCommission(dps),
-              dealAcv,
-              cogs: dps.reduce((s, p) => s + (p.cogs_amount || 0), 0),
+              dealAcv: computeProductAcv(activeDps) + cancelled.revenue,
+              cogs: activeDps.reduce((s, p) => s + (p.cogs_amount || 0), 0),
             }
           }
           setDealFinancials(finMap)
@@ -153,16 +156,21 @@ export default function Dashboard() {
     </div>
   )
 
-  const activeDeals = deals.filter((d) => d.stage !== 'closed_lost' && d.stage !== 'contracted')
+  const activeDeals = deals.filter((d) => !['closed_lost', 'closed_won', 'contracted'].includes(d.stage))
   const contracted = deals.filter((d) => d.stage === 'contracted')
-  const totalPipeline = activeDeals.reduce((s, d) => s + (d.acv || 0), 0)
-  const totalContracted = contracted.reduce((s, d) => s + (d.total_contract_value || d.acv || 0), 0)
+
+  // Use product-computed ACV from dealFinancials where available (proposal/negotiation/contracted);
+  // fall back to manually-entered d.acv for early stages (lead/qualified/discovery)
+  const dealAcv = (d) => dealFinancials[d.id]?.dealAcv ?? d.acv ?? 0
+
+  const totalPipeline = activeDeals.reduce((s, d) => s + dealAcv(d), 0)
+  const totalContracted = contracted.reduce((s, d) => s + dealAcv(d), 0)
   const recentDeals = deals.slice(0, 6)
 
-  const stageCounts = DEAL_STAGES.filter((s) => s.key !== 'closed_lost').map((s) => ({
+  const stageCounts = DEAL_STAGES.filter((s) => !['closed_lost', 'closed_won'].includes(s.key)).map((s) => ({
     ...s,
     count: deals.filter((d) => d.stage === s.key).length,
-    value: deals.filter((d) => d.stage === s.key).reduce((sum, d) => sum + (d.acv || 0), 0),
+    value: deals.filter((d) => d.stage === s.key).reduce((sum, d) => sum + dealAcv(d), 0),
   }))
 
   return (
@@ -182,8 +190,9 @@ export default function Dashboard() {
           icon={TrendingUp}
           color="bg-navy-900"
           onClick={isManager ? () => setShowEstimator(true) : undefined}
+          clickLabel="View estimator →"
         />
-        <StatCard label="Contracted" value={fmt(totalContracted, 2)} sub={`${contracted.length} deals`} icon={DollarSign} color="bg-accent-400" />
+        <StatCard label="Contracted ACV" value={fmt(totalContracted, 2)} sub={`${contracted.length} deals`} icon={DollarSign} color="bg-accent-400" onClick={() => setShowContracted(true)} clickLabel="View ACV breakdown →" />
         <StatCard label="Deal Stages" value={stageCounts.filter((s) => s.count > 0).length} sub="Active stages" icon={Users} color="bg-purple-500" />
         {isManager && trilogyNet !== null && (
           <StatCard label="Trilogy Take-Home" value={fmt(trilogyNet, 2)} sub="Contracted · net of COGS & payouts" icon={Landmark} color="bg-teal-500" />
@@ -194,8 +203,18 @@ export default function Dashboard() {
       <Card>
         <CardHeader title="Pipeline by Stage" />
         <div className="space-y-3">
+          <div className="flex items-center gap-3 pb-1 border-b border-gray-50">
+            <div className="w-24 flex-shrink-0" />
+            <div className="flex-1 mx-2" />
+            <div className="flex items-center gap-3 text-xs flex-shrink-0 text-gray-400 uppercase tracking-wide font-semibold">
+              <span className="w-5 text-right">#</span>
+              <span className="w-20 text-right">ACV</span>
+            </div>
+          </div>
           {stageCounts.map((s) => {
-            const pct = totalPipeline > 0 ? (s.value / totalPipeline) * 100 : 0
+            const allValues = stageCounts.map((sc) => sc.value)
+            const maxValue = Math.max(...allValues, 1)
+            const pct = (s.value / maxValue) * 100
             return (
               <div key={s.key} className="flex items-center gap-3">
                 <StageBadge stage={s.key} />
@@ -225,6 +244,9 @@ export default function Dashboard() {
               const dotColor  = urgent ? 'bg-red-400'    : soon ? 'bg-amber-400'    : 'bg-green-400'
               const badgeCls  = urgent ? 'bg-red-50 text-red-600' : soon ? 'bg-amber-50 text-amber-600' : 'bg-green-50 text-green-600'
               const hasRenewal = renewedDealIds.has(d.id)
+              const fin = dealFinancials[d.id]
+              const displayAcv = fin?.dealAcv || d.acv || 0
+              const marginPct = fin ? (getMarginPct(fin.dealAcv, fin.cogs) ?? null) * 100 : null
               return (
                 <div
                   key={d.id}
@@ -240,8 +262,15 @@ export default function Dashboard() {
                       <p className="text-xs text-gray-400 truncate">{d.company_name}</p>
                     </div>
                     <div className="text-right flex-shrink-0">
-                      <p className="text-sm font-bold text-navy-900">{fmt(d.acv, 0)}<span className="text-xs font-normal text-gray-400"> /yr</span></p>
-                      <p className="text-xs text-gray-400">{format(parseISO(d.contract_end), 'MMM d, yyyy')}</p>
+                      <p className="text-sm font-bold text-navy-900">{fmt(displayAcv, 0)}<span className="text-xs font-normal text-gray-400"> /yr</span></p>
+                      <p className="text-xs text-gray-400">
+                        {format(parseISO(d.contract_end), 'MMM d, yyyy')}
+                        {isManager && marginPct != null && (
+                          <span className={`ml-2 font-medium ${marginPct >= 30 ? 'text-green-600' : marginPct >= 15 ? 'text-amber-500' : 'text-red-500'}`}>
+                            · {marginPct.toFixed(1)}% margin
+                          </span>
+                        )}
+                      </p>
                     </div>
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${badgeCls}`}>
                       {d.daysLeft === 0 ? 'Today' : `${d.daysLeft}d`}
@@ -252,7 +281,7 @@ export default function Dashboard() {
                       ? <span className="text-xs text-primary-500 font-medium flex-shrink-0">Renewal in progress</span>
                       : (
                         <button
-                          onClick={() => navigate(`/deals/${d.id}`)}
+                          onClick={() => navigate(`/deals/${d.id}`, { state: { openRenewal: true } })}
                           className="flex items-center gap-1 text-xs font-medium text-primary-500 hover:text-primary-600 transition-colors flex-shrink-0 whitespace-nowrap"
                         >
                           <RefreshCw size={11} /> Start Renewal
@@ -297,7 +326,7 @@ export default function Dashboard() {
               </div>
               <div className="flex items-center gap-3 ml-3 flex-shrink-0">
                 <StageBadge stage={deal.stage} />
-                <span className="text-sm font-semibold text-navy-900">{fmt(deal.acv, 2)}</span>
+                <span className="text-sm font-semibold text-navy-900">{fmt(dealAcv(deal), 2)}</span>
               </div>
             </button>
           ))}
@@ -314,6 +343,36 @@ export default function Dashboard() {
           onClose={() => setShowEstimator(false)}
         />
       )}
+
+      <Modal open={showContracted} onClose={() => setShowContracted(false)} title="Contracted ACV Breakdown" size="sm">
+        <div className="space-y-1">
+          {[...contracted]
+            .sort((a, b) => (dealFinancials[b.id]?.dealAcv ?? b.acv ?? 0) - (dealFinancials[a.id]?.dealAcv ?? a.acv ?? 0))
+            .map((d) => {
+              const dealAcv = dealFinancials[d.id]?.dealAcv ?? d.acv ?? 0
+              return (
+                <button
+                  key={d.id}
+                  onClick={() => { setShowContracted(false); navigate(`/deals/${d.id}`) }}
+                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-gray-50 transition-colors text-left group"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-navy-900 truncate">{d.name}</p>
+                    <p className="text-xs text-gray-400">{d.company_name}</p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                    <span className="text-sm font-semibold text-navy-900">{fmt(dealAcv, 2)}</span>
+                    <ArrowRight size={13} className="text-gray-300 group-hover:text-primary-400 transition-colors" />
+                  </div>
+                </button>
+              )
+            })}
+          <div className="border-t border-gray-100 mt-2 pt-3 flex justify-between px-3">
+            <span className="text-sm font-semibold text-gray-500">Total</span>
+            <span className="text-sm font-bold text-navy-900">{fmt(totalContracted, 2)}</span>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

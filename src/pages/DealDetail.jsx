@@ -1,6 +1,7 @@
-import { useState, useRef, useMemo } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { Edit, Trash2, FileText, AlertTriangle, GitBranch, RefreshCw, ArrowRight } from 'lucide-react'
+import { useState, useRef, useMemo, useEffect, useCallback, lazy, Suspense } from 'react'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
+import { differenceInDays, parseISO } from 'date-fns'
+import { Edit, Trash2, FileText, AlertTriangle, GitBranch, RefreshCw, ArrowRight, ChevronDown } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import Card, { CardHeader } from '../components/ui/Card'
 import { StageBadge, Badge } from '../components/ui/Badge'
@@ -17,7 +18,7 @@ import Modal from '../components/ui/Modal'
 import DealOverviewModal from '../components/DealOverviewModal'
 import AmendDealModal from '../components/AmendDealModal'
 import EditAmendmentModal from '../components/EditAmendmentModal'
-import ProposalBuilder from '../components/ProposalBuilder'
+const ProposalBuilder = lazy(() => import('../components/ProposalBuilder'))
 import { format } from 'date-fns'
 import { useDealDetail } from '../hooks/useDealDetail'
 import MarginApprovalBanner from '../components/deal/MarginApprovalBanner'
@@ -31,9 +32,70 @@ import DealNotesCard from '../components/deal/DealNotesCard'
 import StartRenewalModal from '../components/deal/StartRenewalModal'
 import ContractAnalysisCards from '../components/deal/ContractAnalysisCards'
 import DealBrainPanel from '../components/deal/DealBrainPanel'
+import ExecReportModal from '../components/ExecReportModal'
+
+function DocsDropdown({ onProposal, onExecReport, onQuestionnaire, proposalDisabled, isManager }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    function handler(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  function pick(fn) {
+    setOpen(false)
+    fn()
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors"
+      >
+        <FileText size={14} />
+        Documents
+        <ChevronDown size={13} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 mt-1.5 w-44 bg-white border border-gray-200 rounded-xl shadow-lg z-50 py-1 overflow-hidden">
+          <button
+            onClick={() => pick(onProposal)}
+            disabled={proposalDisabled}
+            className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            Proposal
+          </button>
+          <button
+            onClick={() => pick(onQuestionnaire)}
+            className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+          >
+            Questionnaire
+          </button>
+          {isManager && (
+            <>
+              <div className="border-t border-gray-100 my-1" />
+              <button
+                onClick={() => pick(onExecReport)}
+                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Exec Report
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function StageProgress({ current }) {
-  const active = DEAL_STAGES.filter((s) => s.key !== 'closed_lost')
+  const active = DEAL_STAGES.filter((s) => !['closed_lost', 'closed_won'].includes(s.key))
   const currentIdx = active.findIndex((s) => s.key === current)
   return (
     <div className="flex items-center gap-0">
@@ -54,6 +116,7 @@ function StageProgress({ current }) {
 export default function DealDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const { isManager, isSales, profile } = useUser()
 
   const {
@@ -75,6 +138,7 @@ export default function DealDetail() {
     loading,
     currentUserId,
     load,
+    loadAuditLog,
     logEvent,
     handleStageChange: _handleStageChange,
     handleDelete: _handleDelete,
@@ -90,8 +154,17 @@ export default function DealDetail() {
   const [showProposal, setShowProposal] = useState(false)
   const [showAmend, setShowAmend] = useState(false)
   const [showRenewal, setShowRenewal] = useState(false)
+  // Auto-open renewal modal when navigated here from Dashboard "Start Renewal"
+  useEffect(() => {
+    if (location.state?.openRenewal) {
+      setShowRenewal(true)
+      // Clear the flag so a refresh doesn't re-open it
+      navigate(location.pathname, { replace: true, state: {} })
+    }
+  }, [location.state?.openRenewal])
   const [showQuestionnaireBuilder, setShowQuestionnaireBuilder] = useState(false)
   const [editingAmendment, setEditingAmendment] = useState(null)
+  const [showExecReport, setShowExecReport] = useState(false)
   // AI coordination state (shared between DealBrainPanel & ContractAnalysisCards)
   const [aiExtracting, setAiExtracting] = useState(false)
   const [aiContract, setAiContract] = useState(null)
@@ -125,8 +198,9 @@ export default function DealDetail() {
     [deal, dealProducts, dealTeam]
   )
   const quarterGroups = useMemo(() => groupScheduleByQuarter(schedule), [schedule])
-  const salesTeam = useMemo(() => dealTeam.filter((m) => m.role === 'sales'), [dealTeam])
+  const salesTeam   = useMemo(() => dealTeam.filter((m) => m.role === 'sales'),   [dealTeam])
   const supportTeam = useMemo(() => dealTeam.filter((m) => m.role === 'support'), [dealTeam])
+  const partnerTeam = useMemo(() => dealTeam.filter((m) => m.role === 'partner'), [dealTeam])
 
   function buildDealContext() {
     if (!deal) return null
@@ -212,29 +286,58 @@ export default function DealDetail() {
             </button>
           ))}
         </div>
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap items-center">
           <Button variant="secondary" size="sm" onClick={() => setShowOverview(true)}>Overview</Button>
-          <Button
-            variant="secondary" size="sm"
-            onClick={() => setShowProposal(true)}
-            icon={<FileText size={14} />}
-            disabled={['lead', 'qualified', 'discovery'].includes(deal.stage) || approval?.status === 'pending'}
-          >
-            Proposal
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => setShowQuestionnaireBuilder(true)} icon={<FileText size={14} />}>
-            Questionnaire
-          </Button>
+
+          {/* Documents dropdown */}
+          <DocsDropdown
+            onProposal={() => setShowProposal(true)}
+            onExecReport={() => setShowExecReport(true)}
+            onQuestionnaire={() => setShowQuestionnaireBuilder(true)}
+            proposalDisabled={['lead', 'qualified', 'discovery'].includes(deal.stage) || approval?.status === 'pending'}
+            isManager={isManager}
+          />
+
           {isManager && deal.stage === 'contracted' && (
             <Button variant="secondary" size="sm" onClick={() => setShowAmend(true)} icon={<GitBranch size={14} />}>Amend</Button>
-          )}
-          {isManager && deal.stage === 'contracted' && successors.length === 0 && (
-            <Button variant="secondary" size="sm" onClick={() => setShowRenewal(true)} icon={<RefreshCw size={14} />}>Start Renewal</Button>
           )}
           <Button variant="secondary" size="sm" onClick={() => navigate(`/deals/${id}/edit`)} icon={<Edit size={14} />}>Edit</Button>
           <Button variant="danger" size="sm" onClick={() => setDeleteDlg(true)} icon={<Trash2 size={14} />}>Delete</Button>
         </div>
       </div>
+
+      {/* Renewal banner — contracted deals with no renewal started yet */}
+      {isManager && deal.stage === 'contracted' && successors.length === 0 && deal.contract_end && (() => {
+        const daysLeft = differenceInDays(parseISO(deal.contract_end), new Date())
+        const expired = daysLeft < 0
+        const soon    = daysLeft <= 90
+        if (!soon && !expired) return null
+        return (
+          <div className={`flex items-center justify-between gap-4 rounded-2xl px-5 py-3.5 border ${
+            expired ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'
+          }`}>
+            <div className="flex items-center gap-3">
+              <RefreshCw size={16} className={expired ? 'text-red-500' : 'text-amber-500'} />
+              <div>
+                <p className={`text-sm font-semibold ${expired ? 'text-red-700' : 'text-amber-700'}`}>
+                  {daysLeft === 0 ? 'Contract expires today' : expired ? 'Contract has expired' : `Contract renews in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}`}
+                </p>
+                <p className={`text-xs mt-0.5 ${expired ? 'text-red-500' : 'text-amber-500'}`}>
+                  Expires {format(new Date(deal.contract_end + 'T12:00:00'), 'MMMM d, yyyy')} · Start the renewal to keep this customer.
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              icon={<RefreshCw size={13} />}
+              onClick={() => setShowRenewal(true)}
+              className={expired ? '!bg-red-500 hover:!bg-red-600 flex-shrink-0' : '!bg-amber-500 hover:!bg-amber-600 flex-shrink-0'}
+            >
+              Start Renewal
+            </Button>
+          </div>
+        )
+      })()}
 
       {/* Stage bar */}
       <Card>
@@ -286,7 +389,7 @@ export default function DealDetail() {
       />
 
       {/* Deal Info + Team */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div className={`grid grid-cols-1 gap-5 ${dealTeam.length > 0 ? 'lg:grid-cols-2' : ''}`}>
         <Card>
           <CardHeader title="Deal Info" />
           <dl className="space-y-2.5">
@@ -327,8 +430,8 @@ export default function DealDetail() {
                         <p className="text-xs text-gray-500">Sales</p>
                       </div>
                     </div>
-                    {isManager && <Badge color="green">{m.commission_percent}% commission</Badge>}
-                    {!isManager && isOwnRow && <Badge color="green">{m.commission_percent}% commission</Badge>}
+                    {!deal.is_tbn_property && isManager && <Badge color="green">{m.commission_percent}% commission</Badge>}
+                    {!deal.is_tbn_property && !isManager && isOwnRow && <Badge color="green">{m.commission_percent}% commission</Badge>}
                   </div>
                 )
               })}
@@ -350,6 +453,19 @@ export default function DealDetail() {
                   </div>
                 )
               })}
+              {partnerTeam.map((m) => (
+                <div key={m.id} className="flex items-center justify-between py-1.5">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center text-purple-700 font-semibold text-xs flex-shrink-0">
+                      {m.people?.name?.[0]}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-navy-900">{m.people?.name}</p>
+                      <p className="text-xs text-gray-500">Partner</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </Card>
         )}
@@ -365,6 +481,7 @@ export default function DealDetail() {
         deal={deal}
         showBuilder={showQuestionnaireBuilder}
         onCloseBuilder={() => setShowQuestionnaireBuilder(false)}
+        onLogged={loadAuditLog}
         onCreated={(openBuilder) => {
           if (openBuilder) { setShowQuestionnaireBuilder(true); return }
           setShowQuestionnaireBuilder(false)
@@ -437,12 +554,16 @@ export default function DealDetail() {
         />
       )}
       {showProposal && (
-        <ProposalBuilder
-          deal={deal}
-          dealProducts={dealProducts}
-          dealPartners={dealPartners}
-          onClose={() => setShowProposal(false)}
-        />
+        <Suspense fallback={null}>
+          <ProposalBuilder
+            deal={deal}
+            dealProducts={dealProducts}
+            dealPartners={dealPartners}
+            dealTeam={dealTeam}
+            onClose={() => setShowProposal(false)}
+            onLogged={loadAuditLog}
+          />
+        </Suspense>
       )}
       {showAmend && (
         <AmendDealModal
@@ -487,6 +608,21 @@ export default function DealDetail() {
         title="Delete Deal"
         message={`"${deal.name}" will be moved to the trash. You can restore it from the Deals page.`}
       />
+
+      {showExecReport && (
+        <ExecReportModal
+          open={showExecReport}
+          onClose={() => setShowExecReport(false)}
+          onLogged={loadAuditLog}
+          deal={deal}
+          dealProducts={dealProducts}
+          dealTeam={dealTeam}
+          dealPartners={dealPartners}
+          approval={approval}
+          quarterGroups={quarterGroups}
+          amendments={amendments}
+        />
+      )}
 
       {/* Deal Brain floating panel */}
       <DealBrainPanel

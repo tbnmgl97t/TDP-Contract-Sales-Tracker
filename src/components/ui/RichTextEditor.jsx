@@ -1,8 +1,8 @@
 import { useEditor, EditorContent } from '@tiptap/react'
-import { useEffect } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
-import { Bold, Italic, List, ListOrdered } from 'lucide-react'
+import { Bold, Italic, List, ListOrdered, Maximize2, Minimize2 } from 'lucide-react'
 
 function ToolbarButton({ onClick, active, title, children }) {
   return (
@@ -21,7 +21,18 @@ function ToolbarButton({ onClick, active, title, children }) {
   )
 }
 
-export default function RichTextEditor({ value, onChange, placeholder, disabled }) {
+// jsonMode=true: value/onChange use Tiptap JSON objects instead of HTML strings
+export default function RichTextEditor({ value, onChange, placeholder, disabled, jsonMode = false, expandable = false }) {
+  const [expanded, setExpanded] = useState(false)
+  const rootRef = useRef(null)
+
+  function toggleExpand() {
+    const next = !expanded
+    setExpanded(next)
+    rootRef.current?.dispatchEvent(
+      new CustomEvent('rte-expand', { bubbles: true, detail: { expanded: next } })
+    )
+  }
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -38,24 +49,38 @@ export default function RichTextEditor({ value, onChange, placeholder, disabled 
     content: value || '',
     editable: !disabled,
     onUpdate({ editor }) {
-      const html = editor.isEmpty ? '' : editor.getHTML()
-      onChange(html)
+      if (jsonMode) {
+        onChange(editor.isEmpty ? null : editor.getJSON())
+      } else {
+        const html = editor.isEmpty ? '' : editor.getHTML()
+        onChange(html)
+      }
     },
   })
 
   // Sync external value into editor (e.g. when pre-existing answers load async)
   useEffect(() => {
     if (!editor) return
-    const current = editor.isEmpty ? '' : editor.getHTML()
-    if ((value || '') !== current) {
-      editor.commands.setContent(value || '', false)
+    if (jsonMode) {
+      // Compare by serialized JSON to avoid spurious resets
+      const currentJson = editor.isEmpty ? null : editor.getJSON()
+      const currentSer = JSON.stringify(currentJson)
+      const valueSer   = JSON.stringify(value || null)
+      if (currentSer !== valueSer) {
+        editor.commands.setContent(value || '', false)
+      }
+    } else {
+      const current = editor.isEmpty ? '' : editor.getHTML()
+      if ((value || '') !== current) {
+        editor.commands.setContent(value || '', false)
+      }
     }
   }, [value]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!editor) return null
 
   return (
-    <div className={`rounded-lg border ${disabled ? 'border-gray-100 bg-gray-50' : 'border-gray-200 bg-white focus-within:ring-2 focus-within:ring-primary-400 focus-within:border-transparent'} overflow-hidden`}>
+    <div ref={rootRef} className={`rounded-lg border ${disabled ? 'border-gray-100 bg-gray-50' : 'border-gray-200 bg-white focus-within:ring-2 focus-within:ring-primary-400 focus-within:border-transparent'} overflow-hidden`}>
       {/* Toolbar */}
       {!disabled && (
         <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-gray-100 bg-gray-50/60">
@@ -88,6 +113,14 @@ export default function RichTextEditor({ value, onChange, placeholder, disabled 
           >
             <ListOrdered size={13} />
           </ToolbarButton>
+          {expandable && (
+            <>
+              <div className="w-px h-4 bg-gray-200 mx-1 ml-auto" />
+              <ToolbarButton onClick={toggleExpand} title={expanded ? 'Collapse' : 'Expand editor'}>
+                {expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+              </ToolbarButton>
+            </>
+          )}
         </div>
       )}
       {/* Editor area */}
