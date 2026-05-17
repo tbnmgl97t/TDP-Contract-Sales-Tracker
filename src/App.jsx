@@ -22,6 +22,7 @@ const Companies          = lazy(() => import('./pages/Companies'))
 const Commission         = lazy(() => import('./pages/Commission'))
 const Analytics          = lazy(() => import('./pages/Analytics'))
 const Partners           = lazy(() => import('./pages/Partners'))
+const PartnerDetail      = lazy(() => import('./pages/PartnerDetail'))
 const Settings           = lazy(() => import('./pages/Settings'))
 const UserManagement     = lazy(() => import('./pages/UserManagement'))
 const Activity           = lazy(() => import('./pages/Activity'))
@@ -89,6 +90,7 @@ export default function App() {
               <Route path="vendors" element={<Vendors />} />
               <Route path="vendors/:id" element={<VendorDetail />} />
               <Route path="partners" element={<Partners />} />
+              <Route path="partners/:id" element={<PartnerDetail />} />
               <Route path="categories" element={<Categories />} />
               <Route path="people" element={<ManagerOnly><People /></ManagerOnly>} />
               <Route path="customers" element={<Companies />} />
