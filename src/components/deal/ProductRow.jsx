@@ -159,8 +159,10 @@ export default function ProductRow({ item, allItems, products, vendors, pricingM
               _cogs_per_item: selectedProduct?.default_cogs || '',
               _list_price_per_item: selectedProduct?.default_list_price || '',
               markup_pct: selectedProduct?.default_margin_type === 'percent' ? (selectedProduct?.default_margin_pct || '') : '',
-              unit_price: defaults?.unit_price ?? '',
-              cogs_per_unit: defaults?.cogs_per_unit ?? '',
+              cogs_per_unit: defaults?.cogs_per_unit ?? (selectedProduct?.is_usage_based ? (selectedProduct?.default_cogs ?? '') : ''),
+              unit_price: defaults?.unit_price ?? (selectedProduct?.is_usage_based && selectedProduct?.default_cogs && selectedProduct?.default_margin_pct
+                ? parseFloat(calcUnitPriceFromMargin(parseFloat(selectedProduct.default_cogs), parseFloat(selectedProduct.default_margin_pct)).toFixed(6))
+                : ''),
               overage_rate: selectedProduct?.default_overage_rate ?? '',
               cogs_amount: selectedProduct?.quantity_label ? '' : (selectedProduct?.default_cogs || ''),
               list_price: selectedProduct?.quantity_label ? '' : (selectedProduct?.default_list_price || ''),
@@ -182,8 +184,10 @@ export default function ProductRow({ item, allItems, products, vendors, pricingM
               support_product_ids: selectedProduct?.is_support_charge ? (item.support_product_ids || []) : [],
               _trilogy_margin_pct: (() => {
                 if (selectedProduct?.is_support_charge) return ''
-                const u = parseFloat(defaults?.unit_price) || 0
-                const c = parseFloat(defaults?.cogs_per_unit) || 0
+                const u = parseFloat(defaults?.unit_price) || (selectedProduct?.is_usage_based && selectedProduct?.default_cogs && selectedProduct?.default_margin_pct
+                  ? calcUnitPriceFromMargin(parseFloat(selectedProduct.default_cogs), parseFloat(selectedProduct.default_margin_pct))
+                  : 0)
+                const c = parseFloat(defaults?.cogs_per_unit) || (selectedProduct?.is_usage_based ? parseFloat(selectedProduct?.default_cogs) || 0 : 0)
                 return u > 0 && c > 0 && u >= c ? parseFloat(((1 - c / u) * 100).toFixed(2)) : ''
               })(),
             })
