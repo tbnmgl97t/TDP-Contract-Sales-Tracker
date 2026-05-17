@@ -178,6 +178,7 @@ export default function ProductRow({ item, allItems, products, vendors, pricingM
               billing_months: '',
               billing_mode: selectedProduct?.default_billing_mode || 'monthly',
               support_pct: selectedProduct?.is_support_charge ? (selectedProduct?.default_support_pct ?? 15) : '',
+              support_cogs_pct: selectedProduct?.is_support_charge ? (selectedProduct?.default_support_cogs_pct ?? '') : '',
               support_product_ids: selectedProduct?.is_support_charge ? (item.support_product_ids || []) : [],
               _trilogy_margin_pct: (() => {
                 if (selectedProduct?.is_support_charge) return ''
