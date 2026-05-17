@@ -10,6 +10,6 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 // Never set this key in production builds
 export const adminClient = serviceRoleKey
   ? createClient(supabaseUrl, serviceRoleKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
+      auth: { autoRefreshToken: false, persistSession: false, storageKey: 'supabase-admin' },
     })
   : null
