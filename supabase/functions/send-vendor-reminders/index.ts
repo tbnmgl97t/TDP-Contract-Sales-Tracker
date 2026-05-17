@@ -213,6 +213,16 @@ serve(async () => {
           { contract_id: contract.id, days_before: daysBefore },
           { onConflict: 'contract_id,days_before', ignoreDuplicates: true },
         )
+
+        // Log to activity feed
+        await supabase.from('audit_log').insert({
+          deal_id:    null,
+          table_name: 'vendor_contracts',
+          record_id:  contract.id,
+          action:     'event',
+          changed_by: 'system',
+          description: `Vendor contract reminder sent to ${recipients.length} recipient${recipients.length !== 1 ? 's' : ''} — "${contract.title}" (${vendorName}) · notify by ${fmtDate(notifyDateStr)} (${daysBefore} days before)`,
+        })
       }
     }
 

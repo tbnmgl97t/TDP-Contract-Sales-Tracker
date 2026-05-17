@@ -191,6 +191,16 @@ serve(async () => {
         action_id:   action.id,
         days_before: target.daysLeft,
       })
+
+      // 8. Log to activity feed
+      await supabase.from('audit_log').insert({
+        deal_id:    action.deal_id,
+        table_name: 'event',
+        record_id:  action.id,
+        action:     'event',
+        changed_by: 'system',
+        description: `Action reminder sent to ${recipients.length} recipient${recipients.length !== 1 ? 's' : ''}: "${action.title}" due ${daysLabel} (${dueFmt}) — ${dealName}`,
+      })
     }
 
     return new Response(

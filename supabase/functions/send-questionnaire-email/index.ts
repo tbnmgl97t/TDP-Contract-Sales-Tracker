@@ -185,6 +185,20 @@ serve(async (req) => {
         }
       }
 
+      // Log to activity feed
+      if (dealId) {
+        await supabase.from('audit_log').insert({
+          deal_id:    dealId,
+          table_name: 'event',
+          record_id:  questionnaire_id,
+          action:     'event',
+          changed_by: 'system',
+          description: contactEmail
+            ? `Questionnaire reminder sent to ${contactEmail} — "${q.title}"`
+            : `Questionnaire reminder attempted — no contact email found for "${q.title}"`,
+        })
+      }
+
       return new Response(
         JSON.stringify({ sent: totalSent, contact: contactEmail, errors: errors.length ? errors : undefined }),
         { headers: { 'Content-Type': 'application/json' } },
@@ -210,6 +224,26 @@ serve(async (req) => {
           title:      template.subject,
           body:       `${dealName} — ${q.title}`,
           deal_id:    dealId,
+        })
+      }
+    }
+
+    // Log to activity feed
+    if (dealId) {
+      const eventLabels: Record<string, string> = {
+        viewed:           `Questionnaire viewed — "${q.title}"`,
+        activity_started: `Questionnaire started — "${q.title}"`,
+        submitted:        `Questionnaire submitted — "${q.title}"`,
+      }
+      const desc = eventLabels[event_type]
+      if (desc) {
+        await supabase.from('audit_log').insert({
+          deal_id:    dealId,
+          table_name: 'event',
+          record_id:  questionnaire_id,
+          action:     'event',
+          changed_by: 'system',
+          description: totalSent > 0 ? `${desc} · team notified (${totalSent})` : desc,
         })
       }
     }
