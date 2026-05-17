@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Pencil, Trash2, Upload, Eye, Download, FileText, ExternalLink } from 'lucide-react'
+import { ArrowLeft, Plus, Pencil, Trash2, Upload, Eye, Download, FileText, ExternalLink, ScanSearch } from 'lucide-react'
 import VendorBrainPanel from '../components/vendor/VendorBrainPanel'
 import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
@@ -158,7 +158,8 @@ function VendorFormModal({ vendor, onSave, onClose }) {
 }
 
 // ─── Reusable doc row ─────────────────────────────────────────────────────────
-function DocRow({ doc, onView, onDownload, onDelete }) {
+function DocRow({ doc, onView, onDownload, onDelete, onReanalyze, reanalyzing }) {
+  const isPdf = doc.mime_type === 'application/pdf' || doc.file_name?.toLowerCase().endsWith('.pdf')
   return (
     <div className="flex items-center justify-between gap-2 bg-white rounded-lg px-3 py-2 border border-gray-100">
       <div className="flex items-center gap-2 min-w-0">
@@ -172,6 +173,16 @@ function DocRow({ doc, onView, onDownload, onDelete }) {
         </div>
       </div>
       <div className="flex gap-1 flex-shrink-0">
+        {onReanalyze && isPdf && (
+          <button
+            onClick={() => onReanalyze(doc)}
+            disabled={reanalyzing}
+            className="p-1.5 text-gray-400 hover:text-primary-500 hover:bg-primary-50 rounded-lg transition-colors disabled:opacity-40"
+            title="Re-extract notice period with AI"
+          >
+            <ScanSearch size={13} className={reanalyzing ? 'animate-pulse' : ''} />
+          </button>
+        )}
         <button onClick={() => onView(doc)} className="p-1.5 text-gray-400 hover:text-primary-500 hover:bg-primary-50 rounded-lg transition-colors" title="Open"><Eye size={13} /></button>
         <button onClick={() => onDownload(doc)} className="p-1.5 text-gray-400 hover:text-navy-900 hover:bg-gray-100 rounded-lg transition-colors" title="Download"><Download size={13} /></button>
         <button onClick={() => onDelete(doc)} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Delete"><Trash2 size={13} /></button>
@@ -357,7 +368,15 @@ function ContractCard({ contract: initialContract, vendorId, onEdit, onDelete, o
           </div>
           {generalDocs.length === 0 && !uploading && <p className="text-xs text-gray-400 py-0.5">No documents yet.</p>}
           {generalDocs.map((doc) => (
-            <DocRow key={doc.id} doc={doc} onView={handleView} onDownload={handleDownload} onDelete={setDeleteDoc} />
+            <DocRow
+              key={doc.id}
+              doc={doc}
+              onView={handleView}
+              onDownload={handleDownload}
+              onDelete={setDeleteDoc}
+              onReanalyze={(d) => extractNoticePeriod(d.file_path)}
+              reanalyzing={extracting}
+            />
           ))}
         </div>
 
