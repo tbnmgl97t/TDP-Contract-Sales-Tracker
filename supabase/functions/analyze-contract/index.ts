@@ -184,7 +184,9 @@ Deno.serve(async (req) => {
       messages,
     })
 
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const rawText = response.content[0].type === 'text' ? response.content[0].text : ''
+    // Strip markdown code fences if the model wraps JSON despite instructions
+    const text = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
 
     // Log token usage — Sonnet 4.6: $3/M input, $15/M output
     try {
