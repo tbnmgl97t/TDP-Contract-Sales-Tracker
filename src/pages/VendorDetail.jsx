@@ -221,7 +221,10 @@ function ContractCard({ contract: initialContract, vendorId, onEdit, onDelete, o
       const { data } = await supabase.functions.invoke('analyze-contract', {
         body: { file_path: path }
       })
-      const result = JSON.parse(data.result)
+      const raw = typeof data.result === 'string'
+        ? data.result.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+        : JSON.stringify(data.result)
+      const result = JSON.parse(raw)
       if (result.termination_notice_days && result.termination_notice_days > 0) {
         await supabase.from('vendor_contracts')
           .update({ notice_period_days: result.termination_notice_days })
