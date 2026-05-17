@@ -40,11 +40,12 @@ function formatBytes(bytes) {
 function ContractFormModal({ vendorId, initial, onSave, onClose }) {
   const { profile } = useUser()
   const [form, setForm] = useState({
-    title:         initial?.title         || '',
-    contract_type: initial?.contract_type || 'msa',
-    start_date:    initial?.start_date    || '',
-    end_date:      initial?.end_date      || '',
-    notes:         initial?.notes         || '',
+    title:               initial?.title               || '',
+    contract_type:       initial?.contract_type       || 'msa',
+    start_date:          initial?.start_date          || '',
+    end_date:            initial?.end_date            || '',
+    notes:               initial?.notes               || '',
+    notice_period_days:  initial?.notice_period_days != null ? String(initial.notice_period_days) : '',
   })
   const [saving, setSaving] = useState(false)
 
@@ -52,11 +53,12 @@ function ContractFormModal({ vendorId, initial, onSave, onClose }) {
     if (!form.title.trim() || !form.start_date) return
     setSaving(true)
     const payload = {
-      title:         form.title.trim(),
-      contract_type: form.contract_type,
-      start_date:    form.start_date,
-      end_date:      form.end_date || null,
-      notes:         form.notes || null,
+      title:               form.title.trim(),
+      contract_type:       form.contract_type,
+      start_date:          form.start_date,
+      end_date:            form.end_date || null,
+      notes:               form.notes || null,
+      notice_period_days:  form.notice_period_days !== '' ? parseInt(form.notice_period_days, 10) : null,
     }
     if (initial?.id) {
       await supabase.from('vendor_contracts').update(payload).eq('id', initial.id)
@@ -105,6 +107,15 @@ function ContractFormModal({ vendorId, initial, onSave, onClose }) {
           hint="Leave blank if still active"
         />
       </div>
+      <Input
+        label="Notice Period (days)"
+        type="number"
+        min="0"
+        value={form.notice_period_days}
+        onChange={(e) => setForm({ ...form, notice_period_days: e.target.value })}
+        placeholder="e.g., 30"
+        hint="Days of notice required before termination"
+      />
       <Textarea
         label="Notes"
         value={form.notes}
@@ -170,15 +181,18 @@ function DocRow({ doc, onView, onDownload, onDelete }) {
 }
 
 // ─── Contract card (with documents) ──────────────────────────────────────────
-function ContractCard({ contract, vendorId, onEdit, onDelete, onDocsChanged }) {
+function ContractCard({ contract: initialContract, vendorId, onEdit, onDelete, onDocsChanged }) {
   const { profile } = useUser()
+  const [contract, setContract] = useState(initialContract)
   const [docs, setDocs] = useState([])
   const [uploading, setUploading] = useState(false)
   const [uploadingTermination, setUploadingTermination] = useState(false)
+  const [extracting, setExtracting] = useState(false)
   const [deleteDoc, setDeleteDoc] = useState(null)
   const fileInputRef = useRef(null)
   const terminationFileInputRef = useRef(null)
 
+  useEffect(() => { setContract(initialContract) }, [initialContract])
   useEffect(() => { loadDocs() }, [contract.id])
 
   async function loadDocs() {
@@ -188,6 +202,27 @@ function ContractCard({ contract, vendorId, onEdit, onDelete, onDocsChanged }) {
       .eq('contract_id', contract.id)
       .order('uploaded_at', { ascending: false })
     setDocs(data || [])
+  }
+
+  async function extractNoticePeriod(path) {
+    setExtracting(true)
+    try {
+      const { data } = await supabase.functions.invoke('analyze-contract', {
+        body: { file_path: path }
+      })
+      const result = JSON.parse(data.result)
+      if (result.termination_notice_days && result.termination_notice_days > 0) {
+        await supabase.from('vendor_contracts')
+          .update({ notice_period_days: result.termination_notice_days })
+          .eq('id', contract.id)
+        setContract((c) => ({ ...c, notice_period_days: result.termination_notice_days }))
+        onDocsChanged?.()
+      }
+    } catch (e) {
+      console.warn('Notice period extraction failed:', e)
+    } finally {
+      setExtracting(false)
+    }
   }
 
   async function uploadFile(file, isTerminationDoc) {
@@ -206,6 +241,10 @@ function ContractCard({ contract, vendorId, onEdit, onDelete, onDocsChanged }) {
       is_termination_doc: isTerminationDoc,
       uploaded_by:        profile?.email || null,
     })
+    // Auto-extract notice period from non-termination PDFs
+    if (!isTerminationDoc && file.type === 'application/pdf') {
+      extractNoticePeriod(path)
+    }
     return true
   }
 
@@ -243,28 +282,56 @@ function ContractCard({ contract, vendorId, onEdit, onDelete, onDocsChanged }) {
   }
 
   const meta = typeMeta(contract.contract_type)
-  const isTerminated = !!contract.end_date
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const isTerminated = !!contract.end_date && new Date(contract.end_date) < today
   const generalDocs = docs.filter((d) => !d.is_termination_doc)
   const terminationDocs = docs.filter((d) => d.is_termination_doc)
 
+  // Notice period / notification date logic
+  let notificationDate = null
+  let daysUntilNotification = null
+  if (contract.end_date && contract.notice_period_days) {
+    const endDt = new Date(contract.end_date + 'T12:00:00')
+    notificationDate = new Date(endDt)
+    notificationDate.setDate(notificationDate.getDate() - contract.notice_period_days)
+    daysUntilNotification = Math.round((notificationDate - today) / (1000 * 60 * 60 * 24))
+  }
+  const noticeActive = notificationDate !== null && daysUntilNotification <= 0 && !isTerminated
+  const noticeWarning = notificationDate !== null && daysUntilNotification > 0 && daysUntilNotification <= 60 && !isTerminated
+  const isExpiring = noticeActive || noticeWarning
+
   return (
-    <div className={`border rounded-2xl overflow-hidden ${isTerminated ? 'border-gray-200' : 'border-gray-100'}`}>
+    <div className={`border rounded-2xl overflow-hidden ${isTerminated ? 'border-gray-200' : isExpiring ? 'border-amber-200' : 'border-gray-100'}`}>
       {/* Contract header */}
-      <div className={`flex items-start justify-between gap-3 px-4 py-3.5 ${isTerminated ? 'bg-gray-50' : 'bg-white'}`}>
+      <div className={`flex items-start justify-between gap-3 px-4 py-3.5 ${isTerminated ? 'bg-gray-50' : isExpiring ? 'bg-amber-50/40' : 'bg-white'}`}>
         <div className="flex items-start gap-3 min-w-0">
-          <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${isTerminated ? 'bg-gray-100' : 'bg-primary-50'}`}>
-            <FileText size={16} className={isTerminated ? 'text-gray-400' : 'text-primary-500'} />
+          <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5 ${isTerminated ? 'bg-gray-100' : isExpiring ? 'bg-amber-50' : 'bg-primary-50'}`}>
+            <FileText size={16} className={isTerminated ? 'text-gray-400' : isExpiring ? 'text-amber-500' : 'text-primary-500'} />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <p className={`text-sm font-semibold ${isTerminated ? 'text-gray-500' : 'text-navy-900'}`}>{contract.title}</p>
               <Badge color={meta.color}>{meta.label}</Badge>
               {isTerminated && <Badge color="red">Terminated</Badge>}
+              {noticeActive && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-600">⚠ Notice period active</span>}
+              {noticeWarning && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">Notice due in {daysUntilNotification} day{daysUntilNotification !== 1 ? 's' : ''}</span>}
+              {extracting && <span className="text-xs text-gray-400 italic">Extracting notice period…</span>}
             </div>
             <p className="text-xs text-gray-400 mt-1 flex flex-wrap gap-x-2">
               {contract.start_date && <span>Started {format(new Date(contract.start_date + 'T12:00:00'), 'MMM d, yyyy')}</span>}
               {isTerminated && <span className="text-red-400 font-medium">Terminated {format(new Date(contract.end_date + 'T12:00:00'), 'MMM d, yyyy')}</span>}
+              {!isTerminated && contract.end_date && <span className="text-gray-500">Ends {format(new Date(contract.end_date + 'T12:00:00'), 'MMM d, yyyy')}</span>}
             </p>
+            {contract.notice_period_days != null && (
+              <p className="text-xs text-gray-400 mt-0.5">
+                {contract.notice_period_days}-day termination notice
+                {notificationDate && !isTerminated && (
+                  <span className={`ml-1 ${noticeActive ? 'text-red-400 font-medium' : noticeWarning ? 'text-amber-600 font-medium' : ''}`}>
+                    · Notify by {format(notificationDate, 'MMM d, yyyy')}
+                  </span>
+                )}
+              </p>
+            )}
             {contract.notes && <p className="text-xs text-gray-400 mt-1 line-clamp-2">{contract.notes}</p>}
           </div>
         </div>
