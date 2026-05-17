@@ -758,12 +758,14 @@ export default function Questionnaires() {
       </div>
 
       {/* Tab content */}
-      {activeTab === 'questionnaires' && <QuestionnairesTab />}
+      {activeTab === 'questionnaires' && (
+        <>
+          <QuestionnairesTab />
+          <DefaultIntroCard />
+        </>
+      )}
       {activeTab === 'library' && <QuestionLibraryTab />}
       {activeTab === 'sets' && <QuestionSetsTab />}
-
-      {/* Default intro text — always visible */}
-      <DefaultIntroCard />
     </div>
   )
 }

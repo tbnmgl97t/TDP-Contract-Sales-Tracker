@@ -2,14 +2,12 @@ import { useState } from 'react'
 import { CheckCircle, Copy, ExternalLink } from 'lucide-react'
 import Button from '../ui/Button'
 
-export default function QuestionnaireSuccessView({ created, publicLink, expiresIn, onClose }) {
+export default function QuestionnaireSuccessView({ created, publicLink, expiresIn, onClose, onCopy }) {
   const [copied, setCopied] = useState(false)
 
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(publicLink)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
     } catch {
       const el = document.createElement('textarea')
       el.value = publicLink
@@ -17,9 +15,10 @@ export default function QuestionnaireSuccessView({ created, publicLink, expiresI
       el.select()
       document.execCommand('copy')
       document.body.removeChild(el)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
     }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+    onCopy?.()
   }
 
   return (
