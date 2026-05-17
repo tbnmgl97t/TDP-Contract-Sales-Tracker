@@ -100,6 +100,7 @@ export function useNewDeal(editId) {
               contract_months: months,
               acv: deal.acv || '',
               notes: deal.notes || '',
+              executive_summary: deal.executive_summary || '',
             },
             dealProducts: (dps || []).map((dp) => {
               const prod = (prods || []).find((p) => p.id === dp.product_id)
@@ -127,7 +128,7 @@ export function useNewDeal(editId) {
                 })(),
               }
             }),
-            teamMembers: (team || []).map((t) => ({ ...t })),
+            teamMembers: (team || []).map((t) => ({ ...t, commission_justification: t.commission_justification || '' })),
             dealPartners: (dPartners || []).map((dp) => ({ ...dp, commission_pct: dp.commission_pct ?? '' })),
           })
         }
@@ -157,6 +158,7 @@ export function useNewDeal(editId) {
         acv: acv || null,
         total_contract_value: acv ? acv * months / 12 : null,
         notes: form.notes || null,
+        executive_summary: form.executive_summary || null,
         updated_at: new Date().toISOString(),
       }
 
