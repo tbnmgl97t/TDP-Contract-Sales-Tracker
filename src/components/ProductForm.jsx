@@ -166,7 +166,7 @@ export default function ProductForm({ initial, vendors, categories, globalRate, 
               max="99.9"
               step="0.1"
               suffix="%"
-              hint={form._cogs_per_unit && form._trilogy_margin_pct !== '' && parseFloat(form._trilogy_margin_pct) >= 0
+              hint={form._cogs_per_unit && form._trilogy_margin_pct !== '' && parseFloat(form._trilogy_margin_pct) >= 0 && parseFloat(form._trilogy_margin_pct) < 100
                 ? `Rate: $${(parseFloat(form._cogs_per_unit) / (1 - parseFloat(form._trilogy_margin_pct) / 100)).toFixed(4)}`
                 : undefined}
               value={form._trilogy_margin_pct ?? ''}
@@ -176,14 +176,14 @@ export default function ProductForm({ initial, vendors, categories, globalRate, 
                 const cogs = parseFloat(form._cogs_per_unit) || 0
                 const rate = (!isNaN(pctNum) && pctNum >= 0 && pctNum < 100 && cogs > 0)
                   ? parseFloat((cogs / (1 - pctNum / 100)).toFixed(4))
-                  : form._unit_price
+                  : (isFinite(parseFloat(form._unit_price)) ? form._unit_price : '')
                 setForm({ ...form, _trilogy_margin_pct: pct, _unit_price: rate })
               }}
             />
             <CurrencyInput
               label={`Rate (per ${form.unit_label || 'unit'})`}
               hint="COGS ÷ (1 − margin%)"
-              value={form._unit_price != null && form._unit_price !== '' ? parseFloat(Number(form._unit_price).toFixed(4)) : ''}
+              value={(() => { const n = parseFloat(Number(form._unit_price).toFixed(6)); return (isFinite(n) && !isNaN(n)) ? parseFloat(n.toFixed(4)) : '' })()}
               onChange={(v) => {
                 const rate = parseFloat(v) || 0
                 const cogs = parseFloat(form._cogs_per_unit) || 0
