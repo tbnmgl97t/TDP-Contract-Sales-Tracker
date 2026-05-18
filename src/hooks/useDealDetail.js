@@ -22,6 +22,7 @@ export function useDealDetail(id) {
   const [currentPricing, setCurrentPricing] = useState({})
   const [loading, setLoading] = useState(true)
   const [currentUserId, setCurrentUserId] = useState(null)
+  const [linkedVendorContracts, setLinkedVendorContracts] = useState([])
 
   async function load() {
     const [
@@ -33,15 +34,17 @@ export function useDealDetail(id) {
       { data: amends },
       { data: prods },
       { data: commSettings },
+      { data: vcs },
     ] = await Promise.all([
       supabase.from('deals').select('*').eq('id', id).single(),
-      supabase.from('deal_products').select('*, products(name, commission_metric, unit_label, is_support_charge, billing_frequency, rate_overridden)').eq('deal_id', id),
+      supabase.from('deal_products').select('*, products(name, commission_metric, unit_label, is_usage_based, is_support_charge, billing_frequency, rate_overridden)').eq('deal_id', id),
       supabase.from('deal_team').select('*, people(name, role, email, title, bio)').eq('deal_id', id),
       supabase.from('contracts').select('*, ai_analysis').eq('deal_id', id).order('uploaded_at', { ascending: false }),
       supabase.from('deal_partners').select('*, partners(name)').eq('deal_id', id).order('sort_order'),
       supabase.from('deal_amendments').select('*').eq('deal_id', id).order('effective_date'),
       supabase.from('products').select('*, vendors(name)').eq('active', true).order('name'),
       supabase.from('commission_settings').select('global_commission_rate').maybeSingle(),
+      supabase.from('vendor_contracts').select('*, vendors(name)').eq('deal_id', id).order('end_date'),
     ])
 
     let milestonesData = []
@@ -96,6 +99,7 @@ export function useDealDetail(id) {
         .from('product_pricing_params')
         .select('product_id, unit_price, cogs_per_unit, effective_date')
         .order('effective_date', { ascending: false })
+        .order('created_at', { ascending: false })
       // Keep only the most-recent row per product
       for (const row of (pp || [])) {
         if (!pricingMap[row.product_id]) pricingMap[row.product_id] = row
@@ -134,6 +138,7 @@ export function useDealDetail(id) {
     setPredecessorContracts(predContracts)
     setSuccessors(succs)
     setCurrentPricing(pricingMap)
+    setLinkedVendorContracts(vcs || [])
     setLoading(false)
   }
 
@@ -246,6 +251,7 @@ export function useDealDetail(id) {
     currentPricing,
     loading,
     currentUserId,
+    linkedVendorContracts, setLinkedVendorContracts,
     load,
     loadAuditLog,
     logEvent,
