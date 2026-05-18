@@ -40,6 +40,7 @@ export default function NewDeal() {
     is_tbn_property: false, contract_start: '', contract_end: '',
     contract_months: 12, acv: '', notes: '', executive_summary: '',
     notice_period_days: '',
+    auto_renewal: null,
   })
   const [dealProducts, setDealProducts] = useState([])
   const [teamMembers, setTeamMembers] = useState([])
@@ -350,6 +351,26 @@ export default function NewDeal() {
                   placeholder="e.g., 30"
                   hint="Days of notice required from customer to exit"
                 />
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Auto-Renewal</label>
+                  <div className="flex gap-2">
+                    {[{ label: 'Yes', value: true }, { label: 'No', value: false }].map(({ label, value }) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => setForm({ ...form, auto_renewal: form.auto_renewal === value ? null : value })}
+                        className={`flex-1 py-2 text-sm rounded-lg border transition-colors ${
+                          form.auto_renewal === value
+                            ? 'border-primary-400 bg-primary-50 text-primary-700 font-medium'
+                            : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">Does this contract auto-renew?</p>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <input

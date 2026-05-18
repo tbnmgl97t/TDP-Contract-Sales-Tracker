@@ -35,7 +35,7 @@ export default function ContractAnalysisCards({ contracts, aiExtracting, aiContr
           {[
             { label: 'Client', value: a.client_name },
             { label: 'Vendor', value: a.vendor_name },
-            { label: 'Contract Value', value: a.contract_value },
+            { label: 'Contract Value', value: a.calculated_value != null ? `$${Number(a.calculated_value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null },
             { label: 'Payment Terms', value: a.payment_terms },
             { label: 'Start Date', value: a.start_date },
             { label: 'End Date', value: a.end_date },
@@ -48,6 +48,26 @@ export default function ContractAnalysisCards({ contracts, aiExtracting, aiContr
             </div>
           ))}
         </div>
+
+        {a.line_items?.length > 0 && (
+          <div className="bg-gray-50 rounded-lg px-3 py-2.5 mb-3">
+            <p className="text-xs text-gray-400 mb-2">Fee Breakdown</p>
+            <div className="space-y-1">
+              {a.line_items.map((item, i) => {
+                const total = item.total ?? (item.unit_amount != null ? item.unit_amount * (item.quantity ?? 1) * (item.period_months ?? 1) : null)
+                const detail = item.period_months > 1
+                  ? `$${Number(item.unit_amount).toLocaleString('en-US', { minimumFractionDigits: 2 })} × ${item.quantity ?? 1} × ${item.period_months}mo`
+                  : item.unit_amount != null ? `$${Number(item.unit_amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : null
+                return (
+                  <div key={i} className="flex justify-between text-xs">
+                    <span className="text-gray-600">{item.label}{detail ? ` · ${detail}` : ''}</span>
+                    {total != null && <span className="font-medium text-navy-900">${Number(total).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {a.payment_schedule?.length > 0 && (
           <div className="bg-gray-50 rounded-lg px-3 py-2.5 mb-3">

@@ -18,6 +18,7 @@ import {
   UserCog,
   Activity,
   ClipboardList,
+  Receipt,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useUser } from '../../contexts/UserContext'
@@ -28,6 +29,7 @@ const MANAGER_NAV = [
   { to: '/commission', icon: DollarSign, label: 'Commission' },
   { to: '/analytics', icon: BarChart2, label: 'Analytics' },
   { to: '/activity', icon: Activity, label: 'Activity' },
+  { to: '/receivables', icon: Receipt, label: 'Receivables' },
   { divider: true },
   { to: '/products', icon: Package, label: 'Products' },
   { to: '/vendors', icon: Store, label: 'Vendors' },

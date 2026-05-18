@@ -158,6 +158,7 @@ Deno.serve(async (req) => {
   "client_name": "",
   "vendor_name": "",
   "contract_value": "",
+  "contract_value_source": "",
   "currency": "USD",
   "start_date": "",
   "end_date": "",
@@ -166,8 +167,18 @@ Deno.serve(async (req) => {
   "key_milestones": [""],
   "auto_renewal": false,
   "termination_notice_days": null,
+  "line_items": [{ "label": "", "unit_amount": null, "quantity": null, "period_months": null, "total": null }],
+  "calculated_value": null,
+  "value_discrepancy": false,
   "summary": ""
-}`,
+}
+
+Instructions for financial fields:
+- "line_items": Extract every distinct fee or charge. For recurring fees include unit_amount (e.g. 8333.33), quantity (e.g. units/month), and period_months (e.g. 12). For one-time fees set period_months to 1.
+- "calculated_value": Compute this yourself by summing all line item totals (unit_amount * quantity * period_months for recurring, or the stated amount for one-time fees). Do the arithmetic — do not copy the stated total.
+- "contract_value": The total value as literally stated in the contract document. If not explicitly stated, leave empty.
+- "contract_value_source": Quote the exact sentence or clause in the contract where you found contract_value, including the section/page if visible. If you could not find an explicit total, set this to "Not explicitly stated — inferred".
+- "value_discrepancy": Set to true if your calculated_value differs from contract_value by more than 1%.`,
           },
         ],
       }]

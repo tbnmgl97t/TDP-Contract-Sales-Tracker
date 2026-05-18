@@ -102,6 +102,7 @@ export function useNewDeal(editId) {
               notes: deal.notes || '',
               executive_summary: deal.executive_summary || '',
               notice_period_days: deal.notice_period_days != null ? String(deal.notice_period_days) : '',
+              auto_renewal: deal.auto_renewal ?? null,
             },
             dealProducts: (dps || []).map((dp) => {
               const prod = (prods || []).find((p) => p.id === dp.product_id)
@@ -161,6 +162,7 @@ export function useNewDeal(editId) {
         notes: form.notes || null,
         executive_summary: form.executive_summary || null,
         notice_period_days: form.notice_period_days !== '' && form.notice_period_days != null ? parseInt(form.notice_period_days, 10) : null,
+        auto_renewal: form.auto_renewal ?? null,
         updated_at: new Date().toISOString(),
       }
 

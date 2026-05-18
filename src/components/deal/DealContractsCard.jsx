@@ -1,12 +1,12 @@
 import { useState } from 'react'
-import { Upload, FileText, FileCheck, Download, Eye, Sparkles, Loader, Trash2, History } from 'lucide-react'
-import { format } from 'date-fns'
+import { Upload, FileText, FileCheck, Download, Eye, Sparkles, Loader, Trash2, History, AlertTriangle } from 'lucide-react'
+import { format, parseISO, isSameDay, subDays } from 'date-fns'
 import { supabase } from '../../lib/supabase'
 import Card, { CardHeader } from '../ui/Card'
 import Button from '../ui/Button'
 import ConfirmDialog from '../ui/ConfirmDialog'
 
-export default function DealContractsCard({ contracts, predecessorContracts = [], predecessorName, dealId, load, logEvent, onAnalyzePdf }) {
+export default function DealContractsCard({ contracts, predecessorContracts = [], predecessorName, dealId, deal, load, logEvent, onAnalyzePdf }) {
   const [uploading, setUploading] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [deleteContractDlg, setDeleteContractDlg] = useState(null)
@@ -103,21 +103,47 @@ export default function DealContractsCard({ contracts, predecessorContracts = []
                 </div>
               )}
               <div className="space-y-2">
-                {contracts.map((contract) => (
-                  <div key={contract.id} className="flex items-center gap-3 p-3 border border-gray-100 rounded-xl hover:bg-gray-50">
-                    <div className="w-9 h-9 rounded-lg bg-primary-50 flex items-center justify-center flex-shrink-0">
-                      <FileCheck size={18} className="text-primary-500" />
+                {contracts.map((contract) => {
+                  const pdfEndDate = contract.ai_analysis?.end_date
+                  let pdfEndFormatted = null
+                  let hasMismatch = false
+                  if (pdfEndDate) {
+                    try {
+                      pdfEndFormatted = format(parseISO(pdfEndDate), 'MMM d, yyyy')
+                      if (deal?.contract_end) {
+                        hasMismatch = !isSameDay(parseISO(pdfEndDate), parseISO(deal.contract_end))
+                      }
+                    } catch {}
+                  }
+                  const notifyDate = deal?.contract_end && deal?.notice_period_days
+                    ? subDays(parseISO(deal.contract_end), deal.notice_period_days)
+                    : null
+                  const notifyFormatted = notifyDate ? format(notifyDate, 'MMM d, yyyy') : null
+                  return (
+                  <div key={contract.id} className={`flex items-center gap-3 p-3 border rounded-xl hover:bg-gray-50 ${hasMismatch ? 'border-amber-200 bg-amber-50/20' : 'border-gray-100'}`}>
+                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${hasMismatch ? 'bg-amber-50' : 'bg-primary-50'}`}>
+                      <FileCheck size={18} className={hasMismatch ? 'text-amber-500' : 'text-primary-500'} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-sm font-medium text-navy-900 truncate">{contract.file_name}</p>
                         {contract.version > 1 && (
                           <span className="text-xs bg-navy-100 text-navy-600 font-medium px-1.5 py-0.5 rounded flex-shrink-0">v{contract.version}</span>
                         )}
+                        {hasMismatch && (
+                          <span className="inline-flex items-center gap-1 text-xs bg-amber-50 text-amber-600 font-medium px-1.5 py-0.5 rounded border border-amber-200 flex-shrink-0">
+                            <AlertTriangle size={10} />
+                            Date mismatch
+                          </span>
+                        )}
                       </div>
-                      <p className="text-xs text-gray-400">
-                        {format(new Date(contract.uploaded_at), 'MMM d, yyyy')}
+                      <p className={`text-xs mt-0.5 ${hasMismatch ? 'text-amber-600' : 'text-gray-400'}`}>
+                        {`Uploaded ${format(new Date(contract.uploaded_at), 'MMM d, yyyy')}`}
                         {contract.file_size && ` · ${(contract.file_size / 1024).toFixed(0)} KB`}
+                        {pdfEndFormatted && !hasMismatch && ` · Ends ${pdfEndFormatted}`}
+                        {pdfEndFormatted && hasMismatch && ` · Contract shows ${pdfEndFormatted} · Deal shows ${format(parseISO(deal.contract_end), 'MMM d, yyyy')}`}
+                        {notifyFormatted && ` · Notify by ${notifyFormatted}`}
+
                       </p>
                     </div>
                     <div className="flex gap-1">
@@ -143,7 +169,8 @@ export default function DealContractsCard({ contracts, predecessorContracts = []
                       </button>
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </>
           )}
@@ -163,7 +190,7 @@ export default function DealContractsCard({ contracts, predecessorContracts = []
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-gray-600 truncate">{contract.file_name}</p>
                       <p className="text-xs text-gray-400">
-                        {format(new Date(contract.uploaded_at), 'MMM d, yyyy')}
+                        {`Uploaded ${format(new Date(contract.uploaded_at), 'MMM d, yyyy')}`}
                         {contract.file_size && ` · ${(contract.file_size / 1024).toFixed(0)} KB`}
                       </p>
                     </div>

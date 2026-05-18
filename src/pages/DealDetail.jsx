@@ -1,7 +1,7 @@
 import { useState, useRef, useMemo, useEffect, useCallback, lazy, Suspense } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { differenceInDays, parseISO, subDays } from 'date-fns'
-import { Edit, Trash2, FileText, AlertTriangle, GitBranch, RefreshCw, ArrowRight, ChevronDown, Link, ExternalLink } from 'lucide-react'
+import { differenceInDays, isSameDay, parseISO, subDays } from 'date-fns'
+import { Edit, Trash2, FileText, AlertTriangle, GitBranch, RefreshCw, ArrowRight, ChevronDown, ChevronUp, Link, ExternalLink, Download, Eye, Paperclip } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import Card, { CardHeader } from '../components/ui/Card'
 import { StageBadge, Badge } from '../components/ui/Badge'
@@ -27,6 +27,7 @@ import DealQuestionnairesCard from '../components/deal/DealQuestionnairesCard'
 import AmendmentHistoryCard from '../components/deal/AmendmentHistoryCard'
 import CommissionScheduleCard from '../components/deal/CommissionScheduleCard'
 import DealContractsCard from '../components/deal/DealContractsCard'
+import DealReceivablesCard from '../components/deal/DealReceivablesCard'
 import ActivityLogCard from '../components/deal/ActivityLogCard'
 import DealNotesCard from '../components/deal/DealNotesCard'
 import StartRenewalModal from '../components/deal/StartRenewalModal'
@@ -114,6 +115,164 @@ function StageProgress({ current }) {
   )
 }
 
+function LinkedVendorContractCard({ vc, deal, onNavigate, onUnlink }) {
+  const [expanded, setExpanded] = useState(false)
+  const [docs, setDocs] = useState([])
+  const [loadingDocs, setLoadingDocs] = useState(false)
+
+  const daysLeft = vc.end_date ? differenceInDays(parseISO(vc.end_date), new Date()) : null
+  const notifyDate = vc.end_date && vc.notice_period_days ? subDays(parseISO(vc.end_date), vc.notice_period_days) : null
+  const hasConflict = vc.notice_period_days && deal.notice_period_days && vc.notice_period_days > deal.notice_period_days
+  const isExpired = daysLeft !== null && daysLeft < 0
+
+  async function toggleExpand() {
+    if (!expanded && docs.length === 0) {
+      setLoadingDocs(true)
+      const { data } = await supabase
+        .from('vendor_contract_documents')
+        .select('*')
+        .eq('contract_id', vc.id)
+        .order('uploaded_at', { ascending: false })
+      setDocs(data || [])
+      setLoadingDocs(false)
+    }
+    setExpanded((e) => !e)
+  }
+
+  async function handleView(doc) {
+    const { data } = await supabase.storage.from('contracts').createSignedUrl(doc.file_path, 3600)
+    if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+  }
+
+  async function handleDownload(doc) {
+    const { data } = await supabase.storage.from('contracts').download(doc.file_path)
+    if (data) {
+      const url = URL.createObjectURL(data)
+      const a = document.createElement('a')
+      a.href = url; a.download = doc.file_name; a.click()
+      URL.revokeObjectURL(url)
+    }
+  }
+
+  const noticeOverdue = notifyDate !== null && differenceInDays(notifyDate, new Date()) <= 0 && !isExpired
+  const noticeSoon    = notifyDate !== null && differenceInDays(notifyDate, new Date()) > 0 && differenceInDays(notifyDate, new Date()) <= 30
+  const isRed    = !isExpired && (hasConflict || noticeOverdue || (daysLeft !== null && daysLeft <= 30))
+  const isAmber  = !isExpired && !isRed && (noticeSoon || (daysLeft !== null && daysLeft <= 60))
+  const dotColor = isExpired ? 'bg-gray-300' : isRed ? 'bg-red-400' : isAmber ? 'bg-amber-400' : 'bg-green-400'
+  const badgeCls = isExpired ? 'bg-gray-100 text-gray-400' : isRed ? 'bg-red-50 text-red-600' : isAmber ? 'bg-amber-50 text-amber-600' : 'bg-green-50 text-green-600'
+
+  return (
+    <div className={`rounded-lg border transition-colors ${hasConflict ? 'border-amber-200' : 'border-gray-100'}`}>
+      {/* Header row */}
+      <button
+        onClick={toggleExpand}
+        className="w-full flex items-center gap-3 p-3 text-left hover:bg-gray-50 rounded-lg transition-colors"
+      >
+        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium text-navy-900">{vc.vendors?.name}</span>
+            <span className="text-xs text-gray-400">·</span>
+            <span className="text-xs text-gray-500 truncate">{vc.title}</span>
+            {vc.renewal_intent && <span className="text-[11px] bg-green-100 text-green-700 rounded px-1.5 py-0.5 font-medium">Renewal planned</span>}
+            {hasConflict && <span className="text-[11px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 font-medium flex items-center gap-1"><AlertTriangle size={10}/> Vendor notice conflict</span>}
+            {!hasConflict && noticeOverdue && <span className="text-[11px] bg-red-100 text-red-600 rounded px-1.5 py-0.5 font-medium flex items-center gap-1"><AlertTriangle size={10}/> Notice period active</span>}
+            {!hasConflict && !noticeOverdue && noticeSoon && <span className="text-[11px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 font-medium">Notice due in {differenceInDays(notifyDate, new Date())}d</span>}
+          </div>
+          {vc.end_date && (
+            <p className={`text-xs mt-0.5 ${noticeOverdue ? 'text-red-500' : hasConflict || noticeSoon ? 'text-amber-600' : 'text-gray-400'}`}>
+              {isExpired
+                ? `Expired ${format(parseISO(vc.end_date), 'MMM d, yyyy')}`
+                : hasConflict
+                ? `Vendor requires ${vc.notice_period_days}d notice · customer is ${deal.notice_period_days}d · Ends ${format(parseISO(vc.end_date), 'MMM d, yyyy')}`
+                : noticeOverdue
+                ? `${vc.notice_period_days}d notice window is active · Ends ${format(parseISO(vc.end_date), 'MMM d, yyyy')}`
+                : noticeSoon
+                ? `Send notice by ${format(notifyDate, 'MMM d, yyyy')} · Ends ${format(parseISO(vc.end_date), 'MMM d, yyyy')}`
+                : `Ends ${format(parseISO(vc.end_date), 'MMM d, yyyy')}${vc.notice_period_days ? ` · ${vc.notice_period_days}d notice` : ''}`}
+            </p>
+          )}
+        </div>
+        {daysLeft !== null && (
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${badgeCls}`}>
+            {isExpired ? 'Expired' : daysLeft === 0 ? 'Today' : `${daysLeft}d`}
+          </span>
+        )}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={(e) => { e.stopPropagation(); onNavigate() }}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onNavigate() } }}
+            className="p-1.5 text-gray-400 hover:text-navy-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
+            title="Open in Vendors"
+          >
+            <ExternalLink size={13}/>
+          </div>
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={(e) => { e.stopPropagation(); onUnlink(vc.id) }}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onUnlink(vc.id) } }}
+            className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+            title="Remove from deal"
+          >
+            <Trash2 size={13}/>
+          </div>
+          <span className="p-1.5 text-gray-400">
+            {expanded ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
+          </span>
+        </div>
+      </button>
+
+      {/* Expanded documents */}
+      {expanded && (
+        <div className="border-t border-gray-100 px-3 pb-3 pt-2">
+          {loadingDocs ? (
+            <p className="text-xs text-gray-400 py-2">Loading documents…</p>
+          ) : docs.length === 0 ? (
+            <div className="text-xs text-gray-400 py-2 flex items-center gap-1.5">
+              <Paperclip size={12}/> No documents uploaded. Go to <span role="button" tabIndex={0} onClick={onNavigate} onKeyDown={(e) => { if (e.key === 'Enter') onNavigate() }} className="text-primary-500 hover:underline cursor-pointer">Vendor page</span> to upload.
+            </div>
+          ) : (
+            <div className="space-y-1.5 mt-1">
+              {docs.map((doc) => (
+                <div key={doc.id} className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-gray-50 group">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText size={13} className="text-gray-400 flex-shrink-0"/>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-navy-900 truncate">{doc.file_name}</p>
+                      {doc.is_termination_doc && (
+                        <span className="text-[10px] bg-red-50 text-red-600 rounded px-1 py-0.5">Termination</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => handleView(doc)}
+                      className="p-1.5 text-gray-400 hover:text-navy-900 hover:bg-gray-100 rounded-lg transition-colors"
+                      title="View"
+                    >
+                      <Eye size={13}/>
+                    </button>
+                    <button
+                      onClick={() => handleDownload(doc)}
+                      className="p-1.5 text-gray-400 hover:text-navy-900 hover:bg-gray-100 rounded-lg transition-colors"
+                      title="Download"
+                    >
+                      <Download size={13}/>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function DealDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -138,6 +297,7 @@ export default function DealDetail() {
     currentPricing,
     loading,
     currentUserId,
+    linkedVendorContracts, setLinkedVendorContracts,
     load,
     loadAuditLog,
     logEvent,
@@ -146,19 +306,7 @@ export default function DealDetail() {
     handleApprovalAction: _handleApprovalAction,
   } = useDealDetail(id)
 
-  // Vendor contracts linked to this deal
-  const [linkedVendorContracts, setLinkedVendorContracts] = useState([])
   const [showAttachVendorModal, setShowAttachVendorModal] = useState(false)
-
-  useEffect(() => {
-    if (!id) return
-    supabase
-      .from('vendor_contracts')
-      .select('*, vendors(name)')
-      .eq('deal_id', id)
-      .order('end_date')
-      .then(({ data }) => setLinkedVendorContracts(data || []))
-  }, [id])
 
   // UI-only state
   const [deleteDlg, setDeleteDlg] = useState(false)
@@ -219,7 +367,7 @@ export default function DealDetail() {
 
   function buildDealContext() {
     if (!deal) return null
-    return {
+    const ctx = {
       deal: {
         id: deal.id, name: deal.name, company: deal.company_name, stage: deal.stage,
         deal_type: deal.deal_type, is_tbn_property: deal.is_tbn_property,
@@ -260,6 +408,7 @@ export default function DealDetail() {
         }
       }) : undefined,
     }
+    return ctx
   }
 
   async function handleStageChange(stage) {
@@ -333,35 +482,110 @@ export default function DealDetail() {
         </div>
       </div>
 
-      {/* Renewal banner — contracted deals with no renewal started yet */}
-      {isManager && deal.stage === 'contracted' && successors.length === 0 && deal.contract_end && (() => {
+      {/* Renewal banner — contracted deals expiring within 90 days */}
+      {deal.stage === 'contracted' && deal.contract_end && (() => {
         const daysLeft = differenceInDays(parseISO(deal.contract_end), new Date())
-        const expired = daysLeft < 0
-        const soon    = daysLeft <= 90
+        const expired  = daysLeft < 0
+        const soon     = daysLeft <= 90
+        const renewalInProgress = successors.length > 0
         if (!soon && !expired) return null
+        const isRed = expired || daysLeft <= 30
         return (
           <div className={`flex items-center justify-between gap-4 rounded-2xl px-5 py-3.5 border ${
-            expired ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'
+            isRed ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'
           }`}>
             <div className="flex items-center gap-3">
-              <RefreshCw size={16} className={expired ? 'text-red-500' : 'text-amber-500'} />
+              <RefreshCw size={16} className={isRed ? 'text-red-500' : 'text-amber-500'} />
               <div>
-                <p className={`text-sm font-semibold ${expired ? 'text-red-700' : 'text-amber-700'}`}>
-                  {daysLeft === 0 ? 'Contract expires today' : expired ? 'Contract has expired' : `Contract renews in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}`}
+                <p className={`text-sm font-semibold ${isRed ? 'text-red-700' : 'text-amber-700'}`}>
+                  {daysLeft === 0 ? 'Contract expires today' : expired ? 'Contract has expired' : `Contract expires in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}`}
                 </p>
-                <p className={`text-xs mt-0.5 ${expired ? 'text-red-500' : 'text-amber-500'}`}>
-                  Expires {format(new Date(deal.contract_end + 'T12:00:00'), 'MMMM d, yyyy')} · Start the renewal to keep this customer.
+                <p className={`text-xs mt-0.5 ${isRed ? 'text-red-500' : 'text-amber-500'}`}>
+                  {renewalInProgress
+                    ? `Expires ${format(new Date(deal.contract_end + 'T12:00:00'), 'MMMM d, yyyy')} · Renewal deal is in progress.`
+                    : `Expires ${format(new Date(deal.contract_end + 'T12:00:00'), 'MMMM d, yyyy')} · Start the renewal to keep this customer.`}
                 </p>
               </div>
             </div>
-            <Button
-              size="sm"
-              icon={<RefreshCw size={13} />}
-              onClick={() => setShowRenewal(true)}
-              className={expired ? '!bg-red-500 hover:!bg-red-600 flex-shrink-0' : '!bg-amber-500 hover:!bg-amber-600 flex-shrink-0'}
-            >
-              Start Renewal
-            </Button>
+            {renewalInProgress ? (
+              <button
+                onClick={() => navigate(`/deals/${successors[0].id}`)}
+                className={`text-xs font-semibold flex-shrink-0 flex items-center gap-1 ${isRed ? 'text-red-600 hover:text-red-700' : 'text-amber-600 hover:text-amber-700'}`}
+              >
+                View Renewal <ArrowRight size={11}/>
+              </button>
+            ) : isManager ? (
+              <Button
+                size="sm"
+                icon={<RefreshCw size={13} />}
+                onClick={() => setShowRenewal(true)}
+                className={`${isRed ? '!bg-red-500 hover:!bg-red-600' : '!bg-amber-500 hover:!bg-amber-600'} flex-shrink-0`}
+              >
+                Start Renewal
+              </Button>
+            ) : null}
+          </div>
+        )
+      })()}
+
+      {/* Vendor contract renewal awareness */}
+      {deal.stage === 'contracted' && linkedVendorContracts.length > 0 && (() => {
+        const today = new Date()
+        const alerts = linkedVendorContracts
+          .filter((vc) => vc.end_date)
+          .map((vc) => {
+            const daysLeft = differenceInDays(parseISO(vc.end_date), today)
+            const notifyDate = vc.notice_period_days ? subDays(parseISO(vc.end_date), vc.notice_period_days) : null
+            const daysUntilNotify = notifyDate ? differenceInDays(notifyDate, today) : null
+            const hasConflict = vc.notice_period_days && deal.notice_period_days && vc.notice_period_days > deal.notice_period_days
+            const needsAction = daysLeft <= 120
+            return { ...vc, daysLeft, notifyDate, daysUntilNotify, hasConflict, needsAction }
+          })
+          .filter((vc) => vc.needsAction || vc.hasConflict)
+          .sort((a, b) => a.daysLeft - b.daysLeft)
+
+        if (alerts.length === 0) return null
+        return (
+          <div className="space-y-2">
+            {alerts.map((vc) => {
+              const noticeOverdue = vc.daysUntilNotify !== null && vc.daysUntilNotify <= 0
+              const noticeSoon   = vc.daysUntilNotify !== null && vc.daysUntilNotify > 0 && vc.daysUntilNotify <= 30
+              const isConflict   = vc.hasConflict
+              const color = isConflict || noticeOverdue ? 'red' : noticeSoon ? 'amber' : 'amber'
+              const bg    = color === 'red' ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'
+              const icon  = color === 'red' ? 'text-red-500' : 'text-amber-500'
+              const head  = color === 'red' ? 'text-red-700' : 'text-amber-700'
+              const sub   = color === 'red' ? 'text-red-500' : 'text-amber-500'
+              return (
+                <div key={vc.id} className={`flex items-center justify-between gap-4 rounded-2xl px-5 py-3.5 border ${bg}`}>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <AlertTriangle size={16} className={`${icon} flex-shrink-0`} />
+                    <div className="min-w-0">
+                      <p className={`text-sm font-semibold ${head}`}>
+                        {isConflict
+                          ? `Vendor notice conflict — ${vc.vendors?.name}`
+                          : noticeOverdue
+                          ? `Notice period active — ${vc.vendors?.name}`
+                          : `Notice due soon — ${vc.vendors?.name}`}
+                      </p>
+                      <p className={`text-xs mt-0.5 ${sub}`}>
+                        {isConflict
+                          ? `Vendor requires ${vc.notice_period_days}d notice but customer contract is ${deal.notice_period_days}d — renew vendor first.`
+                          : noticeOverdue
+                          ? `${vc.notice_period_days}d notice window is active. Contract ends ${format(parseISO(vc.end_date), 'MMM d, yyyy')} (${vc.daysLeft}d left).`
+                          : `Must send notice by ${format(vc.notifyDate, 'MMM d, yyyy')} — ${vc.daysUntilNotify}d away. Contract ends ${format(parseISO(vc.end_date), 'MMM d, yyyy')}.`}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => navigate(`/vendors/${vc.vendor_id}`)}
+                    className={`text-xs font-semibold flex-shrink-0 flex items-center gap-1 ${color === 'red' ? 'text-red-600 hover:text-red-700' : 'text-amber-600 hover:text-amber-700'}`}
+                  >
+                    View Contract <ExternalLink size={11}/>
+                  </button>
+                </div>
+              )
+            })}
           </div>
         )
       })()}
@@ -420,17 +644,91 @@ export default function DealDetail() {
         <Card>
           <CardHeader title="Deal Info" />
           <dl className="space-y-2.5">
-            {[
-              { label: 'Type', value: deal.deal_type === 'renewal' ? 'Renewal' : 'New Business' },
-              { label: 'Contract Start', value: deal.contract_start ? format(new Date(deal.contract_start + 'T12:00:00'), 'MMM d, yyyy') : '—' },
-              { label: 'Contract End', value: deal.contract_end ? format(new Date(deal.contract_end + 'T12:00:00'), 'MMM d, yyyy') : '—' },
-              { label: 'TBN Property', value: deal.is_tbn_property ? 'Yes (no commission)' : 'No' },
-            ].map(({ label, value }) => (
-              <div key={label} className="flex justify-between text-sm">
-                <span className="text-gray-500">{label}</span>
-                <span className="font-medium text-navy-900">{value}</span>
-              </div>
-            ))}
+            {(() => {
+              const pdfEndMismatch = deal.contract_end
+                ? contracts.reduce((found, c) => {
+                    if (found) return found
+                    const pdfDate = c.ai_analysis?.end_date
+                    if (!pdfDate) return null
+                    try {
+                      return !isSameDay(parseISO(pdfDate), parseISO(deal.contract_end))
+                        ? { pdf: format(parseISO(pdfDate), 'MMM d, yyyy') }
+                        : null
+                    } catch { return null }
+                  }, null)
+                : null
+              const pdfStartMismatch = deal.contract_start
+                ? contracts.reduce((found, c) => {
+                    if (found) return found
+                    const pdfDate = c.ai_analysis?.start_date
+                    if (!pdfDate) return null
+                    try {
+                      return !isSameDay(parseISO(pdfDate), parseISO(deal.contract_start))
+                        ? { pdf: format(parseISO(pdfDate), 'MMM d, yyyy') }
+                        : null
+                    } catch { return null }
+                  }, null)
+                : null
+              const notifyDate = deal.contract_end && deal.notice_period_days
+                ? subDays(parseISO(deal.contract_end), deal.notice_period_days)
+                : null
+              const pdfNoticeMismatch = (() => {
+                for (const c of contracts) {
+                  const pdfDays = c.ai_analysis?.termination_notice_days
+                  if (pdfDays == null) continue
+                  if (deal.notice_period_days == null || pdfDays !== deal.notice_period_days)
+                    return { pdf: `${pdfDays} days` }
+                }
+                return null
+              })()
+              const pdfAutoRenewalMismatch = (() => {
+                for (const c of contracts) {
+                  const pdfVal = c.ai_analysis?.auto_renewal
+                  if (pdfVal == null) continue
+                  if (deal.auto_renewal == null || pdfVal !== deal.auto_renewal)
+                    return { pdf: pdfVal ? 'Yes' : 'No' }
+                }
+                return null
+              })()
+              const dealTotalValue = dealProducts.length > 0
+                ? calcTotalContractValue(displayAcv, deal.contract_months || 12)
+                : (deal.total_contract_value || deal.acv || 0)
+              const pdfValueMismatch = (() => {
+                for (const c of contracts) {
+                  const calc = c.ai_analysis?.calculated_value
+                  if (calc == null) continue
+                  const parsed = parseFloat(calc)
+                  if (isNaN(parsed)) continue
+                  const threshold = Math.max(1, dealTotalValue * 0.001)
+                  if (Math.abs(parsed - dealTotalValue) > threshold)
+                    return { pdf: `$${parsed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
+                }
+                return null
+              })()
+              return [
+                { label: 'Type', value: deal.deal_type === 'renewal' ? 'Renewal' : 'New Business' },
+                { label: 'Contract Start', value: deal.contract_start ? format(new Date(deal.contract_start + 'T12:00:00'), 'MMM d, yyyy') : '—', mismatch: pdfStartMismatch },
+                { label: 'Contract End', value: deal.contract_end ? format(new Date(deal.contract_end + 'T12:00:00'), 'MMM d, yyyy') : '—', mismatch: pdfEndMismatch },
+                { label: 'Notice Period', value: deal.notice_period_days ? `${deal.notice_period_days} days` : '—', mismatch: pdfNoticeMismatch, sub: notifyDate ? `Notify by ${format(notifyDate, 'MMM d, yyyy')}` : null },
+                { label: 'Auto-Renewal', value: deal.auto_renewal == null ? '—' : deal.auto_renewal ? 'Yes' : 'No', mismatch: pdfAutoRenewalMismatch },
+                { label: 'Contract Value', value: dealTotalValue ? `$${dealTotalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—', mismatch: pdfValueMismatch },
+                { label: 'TBN Property', value: deal.is_tbn_property ? 'Yes (no commission)' : 'No' },
+              ].map(({ label, value, mismatch, sub }) => (
+                <div key={label} className="flex justify-between text-sm">
+                  <span className="text-gray-500">{label}</span>
+                  <div className="text-right">
+                    <span className={`font-medium ${mismatch ? 'text-amber-600' : 'text-navy-900'}`}>{value}</span>
+                    {mismatch && (
+                      <p className="text-xs text-amber-500 mt-0.5 flex items-center justify-end gap-1">
+                        <AlertTriangle size={10} />
+                        Contract shows {mismatch.pdf}
+                      </p>
+                    )}
+                    {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+                  </div>
+                </div>
+              ))
+            })()}
             {deal.notes && (
               <div className="pt-2 border-t border-gray-100">
                 <p className="text-xs text-gray-500 mb-1">Notes</p>
@@ -542,40 +840,19 @@ export default function DealDetail() {
           <p className="text-xs text-gray-400 text-center py-4">No vendor contracts linked. Click "Attach Contract" to link one.</p>
         ) : (
           <div className="space-y-2">
-            {linkedVendorContracts.map((vc) => {
-              const daysLeft = vc.end_date ? differenceInDays(parseISO(vc.end_date), new Date()) : null
-              const notifyDate = vc.end_date && vc.notice_period_days ? subDays(parseISO(vc.end_date), vc.notice_period_days) : null
-              const hasConflict = vc.notice_period_days && deal.notice_period_days && vc.notice_period_days > deal.notice_period_days
-              const isExpired = daysLeft !== null && daysLeft < 0
-              return (
-                <div key={vc.id} className="flex items-center justify-between p-3 rounded-lg border border-gray-100 hover:bg-gray-50">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium text-navy-900">{vc.vendors?.name}</span>
-                      <span className="text-xs text-gray-400">·</span>
-                      <span className="text-xs text-gray-500 truncate">{vc.title}</span>
-                      {vc.renewal_intent && <span className="text-[11px] bg-green-100 text-green-700 rounded px-1.5 py-0.5 font-medium">Renewal planned</span>}
-                      {hasConflict && <span className="text-[11px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 font-medium flex items-center gap-1"><AlertTriangle size={10}/> Notice conflict</span>}
-                    </div>
-                    {hasConflict && notifyDate && (
-                      <p className="text-xs text-amber-600 mt-0.5">
-                        Vendor requires {vc.notice_period_days}d notice (customer: {deal.notice_period_days}d) — talks must start by {format(notifyDate, 'MMM d, yyyy')}
-                      </p>
-                    )}
-                    {vc.end_date && (
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {isExpired ? 'Expired' : 'Expires'} {format(parseISO(vc.end_date), 'MMM d, yyyy')}
-                        {!isExpired && daysLeft !== null && ` · ${daysLeft}d left`}
-                        {vc.notice_period_days && ` · ${vc.notice_period_days}d notice`}
-                      </p>
-                    )}
-                  </div>
-                  <button onClick={() => navigate(`/vendors/${vc.vendor_id}`)} className="ml-3 p-1.5 text-gray-400 hover:text-navy-900 hover:bg-gray-100 rounded-lg transition-colors">
-                    <ExternalLink size={13}/>
-                  </button>
-                </div>
-              )
-            })}
+            {linkedVendorContracts.map((vc) => (
+              <LinkedVendorContractCard
+                key={vc.id}
+                vc={vc}
+                deal={deal}
+                onNavigate={() => navigate(`/vendors/${vc.vendor_id}`)}
+                onUnlink={async (vcId) => {
+                  await supabase.from('vendor_contracts').update({ deal_id: null }).eq('id', vcId)
+                  await logEvent(`Vendor contract unlinked: "${vc.title}" (${vc.vendors?.name || 'Unknown vendor'})`)
+                  setLinkedVendorContracts((prev) => prev.filter((v) => v.id !== vcId))
+                }}
+              />
+            ))}
           </div>
         )}
       </Card>
@@ -600,10 +877,16 @@ export default function DealDetail() {
         predecessorContracts={predecessorContracts}
         predecessorName={predecessor?.name}
         dealId={id}
+        deal={deal}
         load={load}
         logEvent={logEvent}
         onAnalyzePdf={(contract) => brainPanelRef.current?.openPanel(contract)}
       />
+
+      {/* Receivables */}
+      {deal.company_id && (
+        <DealReceivablesCard companyId={deal.company_id} companyName={deal.company_name} />
+      )}
 
       {/* Activity Log */}
       <ActivityLogCard auditLog={auditLog} dealTeam={dealTeam} dealProducts={dealProducts} />
@@ -706,9 +989,10 @@ export default function DealDetail() {
         <AttachVendorContractModal
           dealId={id}
           onClose={() => setShowAttachVendorModal(false)}
-          onAttached={() => {
+          onAttached={async (vc) => {
             setShowAttachVendorModal(false)
-            supabase.from('vendor_contracts').select('*, vendors(name)').eq('deal_id', id).order('end_date').then(({ data }) => setLinkedVendorContracts(data || []))
+            if (vc) await logEvent(`Vendor contract linked: "${vc.title}" (${vc.vendors?.name || 'Unknown vendor'})`)
+            load()
           }}
         />
       )}

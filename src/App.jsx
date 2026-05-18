@@ -28,6 +28,7 @@ const UserManagement     = lazy(() => import('./pages/UserManagement'))
 const Activity           = lazy(() => import('./pages/Activity'))
 const Questionnaires     = lazy(() => import('./pages/Questionnaires'))
 const SlideDebug         = lazy(() => import('./pages/SlideDebug'))
+const Receivables        = lazy(() => import('./pages/Receivables'))
 
 function ProtectedRoute({ children, session }) {
   if (!session) return <Navigate to="/login" replace />
@@ -96,6 +97,7 @@ export default function App() {
               <Route path="customers" element={<Companies />} />
               <Route path="companies" element={<Navigate to="/customers" replace />} />
               <Route path="activity" element={<ManagerOnly><Activity /></ManagerOnly>} />
+              <Route path="receivables" element={<ManagerOnly><Receivables /></ManagerOnly>} />
               <Route path="settings" element={<ManagerOnly><Settings /></ManagerOnly>} />
               <Route path="users" element={<ManagerOnly><UserManagement /></ManagerOnly>} />
               <Route path="questionnaires" element={<Questionnaires />} />
