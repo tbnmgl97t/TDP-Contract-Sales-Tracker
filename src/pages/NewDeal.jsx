@@ -39,6 +39,7 @@ export default function NewDeal() {
     name: '', company_id: '', company_name: '', stage: 'lead', deal_type: 'new',
     is_tbn_property: false, contract_start: '', contract_end: '',
     contract_months: 12, acv: '', notes: '', executive_summary: '',
+    notice_period_days: '',
   })
   const [dealProducts, setDealProducts] = useState([])
   const [teamMembers, setTeamMembers] = useState([])
@@ -340,6 +341,16 @@ export default function NewDeal() {
                   className={form.contract_start && form.contract_end ? 'opacity-75' : ''}
                 />
               </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <Input
+                  label="Customer Notice Period (days)"
+                  type="number" min="0"
+                  value={form.notice_period_days}
+                  onChange={(e) => setForm({ ...form, notice_period_days: e.target.value })}
+                  placeholder="e.g., 30"
+                  hint="Days of notice required from customer to exit"
+                />
+              </div>
               <div className="flex items-center gap-2">
                 <input
                   id="tbn"
@@ -388,6 +399,7 @@ export default function NewDeal() {
                     pricingMap={pricingMap}
                     contractMonths={parseInt(form.contract_months) || 12}
                     globalRate={globalRate}
+                    contractStart={form.contract_start || ''}
                     contractEnd={contractEnd}
                     onChange={(updated) => setDealProducts((prev) => { const n = [...prev]; n[i] = updated; return n })}
                     onRemove={() => removeProduct(i)}

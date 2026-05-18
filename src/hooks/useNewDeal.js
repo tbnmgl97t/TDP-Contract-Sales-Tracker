@@ -101,6 +101,7 @@ export function useNewDeal(editId) {
               acv: deal.acv || '',
               notes: deal.notes || '',
               executive_summary: deal.executive_summary || '',
+              notice_period_days: deal.notice_period_days != null ? String(deal.notice_period_days) : '',
             },
             dealProducts: (dps || []).map((dp) => {
               const prod = (prods || []).find((p) => p.id === dp.product_id)
@@ -159,18 +160,14 @@ export function useNewDeal(editId) {
         total_contract_value: acv ? acv * months / 12 : null,
         notes: form.notes || null,
         executive_summary: form.executive_summary || null,
+        notice_period_days: form.notice_period_days !== '' && form.notice_period_days != null ? parseInt(form.notice_period_days, 10) : null,
         updated_at: new Date().toISOString(),
       }
 
       let dealId = editId
       if (isEdit) {
         await supabase.from('deals').update(dealData).eq('id', editId)
-        const activeProductIds = dealProducts.filter((dp) => dp.status !== 'cancelled' && dp.id).map((dp) => dp.id)
-        if (activeProductIds.length > 0) {
-          await supabase.from('deal_products').delete().eq('deal_id', editId).in('id', activeProductIds)
-        } else {
-          await supabase.from('deal_products').delete().eq('deal_id', editId).neq('status', 'cancelled')
-        }
+        await supabase.from('deal_products').delete().eq('deal_id', editId).neq('status', 'cancelled')
         await supabase.from('deal_team').delete().eq('deal_id', editId)
         await supabase.from('deal_partners').delete().eq('deal_id', editId)
       } else {
@@ -197,8 +194,8 @@ export function useNewDeal(editId) {
           const milestoneRows = []
           insertedDPs.forEach((insertedDP, i) => {
             ;(dpToInsert[i].milestones || []).forEach((m, j) => {
-              if (m.payment_date && (parseFloat(m.amount) || 0) > 0) {
-                milestoneRows.push({ deal_product_id: insertedDP.id, payment_date: m.payment_date, amount: parseFloat(m.amount), label: m.label || null, sort_order: j })
+              if ((parseFloat(m.amount) || 0) > 0) {
+                milestoneRows.push({ deal_product_id: insertedDP.id, payment_date: m.payment_date || null, amount: parseFloat(m.amount), label: m.label || null, sort_order: j })
               }
             })
           })

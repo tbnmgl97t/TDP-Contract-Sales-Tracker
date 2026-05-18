@@ -1,7 +1,7 @@
 import { useState, useRef, useMemo, useEffect, useCallback, lazy, Suspense } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { differenceInDays, parseISO } from 'date-fns'
-import { Edit, Trash2, FileText, AlertTriangle, GitBranch, RefreshCw, ArrowRight, ChevronDown } from 'lucide-react'
+import { differenceInDays, parseISO, subDays } from 'date-fns'
+import { Edit, Trash2, FileText, AlertTriangle, GitBranch, RefreshCw, ArrowRight, ChevronDown, Link, ExternalLink } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import Card, { CardHeader } from '../components/ui/Card'
 import { StageBadge, Badge } from '../components/ui/Badge'
@@ -30,6 +30,7 @@ import DealContractsCard from '../components/deal/DealContractsCard'
 import ActivityLogCard from '../components/deal/ActivityLogCard'
 import DealNotesCard from '../components/deal/DealNotesCard'
 import StartRenewalModal from '../components/deal/StartRenewalModal'
+import AttachVendorContractModal from '../components/AttachVendorContractModal'
 import ContractAnalysisCards from '../components/deal/ContractAnalysisCards'
 import DealBrainPanel from '../components/deal/DealBrainPanel'
 import ExecReportModal from '../components/ExecReportModal'
@@ -145,6 +146,20 @@ export default function DealDetail() {
     handleApprovalAction: _handleApprovalAction,
   } = useDealDetail(id)
 
+  // Vendor contracts linked to this deal
+  const [linkedVendorContracts, setLinkedVendorContracts] = useState([])
+  const [showAttachVendorModal, setShowAttachVendorModal] = useState(false)
+
+  useEffect(() => {
+    if (!id) return
+    supabase
+      .from('vendor_contracts')
+      .select('*, vendors(name)')
+      .eq('deal_id', id)
+      .order('end_date')
+      .then(({ data }) => setLinkedVendorContracts(data || []))
+  }, [id])
+
   // UI-only state
   const [deleteDlg, setDeleteDlg] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -210,6 +225,7 @@ export default function DealDetail() {
         deal_type: deal.deal_type, is_tbn_property: deal.is_tbn_property,
         contract_start: deal.contract_start, contract_end: deal.contract_end,
         contract_months: deal.contract_months, notes: deal.notes,
+        notice_period_days: deal.notice_period_days ?? null,
         created_by: deal.created_by || null,
         created_at: deal.created_at ? new Date(deal.created_at).toLocaleString() : null,
         updated_at: deal.updated_at ? new Date(deal.updated_at).toLocaleString() : null,
@@ -232,6 +248,17 @@ export default function DealDetail() {
         ...(c.ai_analysis ? { analysis: c.ai_analysis } : {}),
       })),
       audit_log: auditLog,
+      vendor_contracts: linkedVendorContracts.length > 0 ? linkedVendorContracts.map((vc) => {
+        const conflict = vc.notice_period_days && deal.notice_period_days && vc.notice_period_days > deal.notice_period_days
+        return {
+          vendor: vc.vendors?.name,
+          title: vc.title,
+          end_date: vc.end_date || null,
+          notice_period_days: vc.notice_period_days ?? null,
+          renewal_intent: vc.renewal_intent || false,
+          conflict: conflict || false,
+        }
+      }) : undefined,
     }
   }
 
@@ -502,6 +529,57 @@ export default function DealDetail() {
         />
       </Card>
 
+      {/* Vendor Contracts */}
+      <Card>
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-sm font-semibold text-navy-900">Vendor Contracts</h3>
+            <p className="text-xs text-gray-400">Backend contracts supporting this deal</p>
+          </div>
+          <Button size="sm" variant="secondary" onClick={() => setShowAttachVendorModal(true)} icon={<Link size={14}/>}>Attach Contract</Button>
+        </div>
+        {linkedVendorContracts.length === 0 ? (
+          <p className="text-xs text-gray-400 text-center py-4">No vendor contracts linked. Click "Attach Contract" to link one.</p>
+        ) : (
+          <div className="space-y-2">
+            {linkedVendorContracts.map((vc) => {
+              const daysLeft = vc.end_date ? differenceInDays(parseISO(vc.end_date), new Date()) : null
+              const notifyDate = vc.end_date && vc.notice_period_days ? subDays(parseISO(vc.end_date), vc.notice_period_days) : null
+              const hasConflict = vc.notice_period_days && deal.notice_period_days && vc.notice_period_days > deal.notice_period_days
+              const isExpired = daysLeft !== null && daysLeft < 0
+              return (
+                <div key={vc.id} className="flex items-center justify-between p-3 rounded-lg border border-gray-100 hover:bg-gray-50">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium text-navy-900">{vc.vendors?.name}</span>
+                      <span className="text-xs text-gray-400">·</span>
+                      <span className="text-xs text-gray-500 truncate">{vc.title}</span>
+                      {vc.renewal_intent && <span className="text-[11px] bg-green-100 text-green-700 rounded px-1.5 py-0.5 font-medium">Renewal planned</span>}
+                      {hasConflict && <span className="text-[11px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 font-medium flex items-center gap-1"><AlertTriangle size={10}/> Notice conflict</span>}
+                    </div>
+                    {hasConflict && notifyDate && (
+                      <p className="text-xs text-amber-600 mt-0.5">
+                        Vendor requires {vc.notice_period_days}d notice (customer: {deal.notice_period_days}d) — talks must start by {format(notifyDate, 'MMM d, yyyy')}
+                      </p>
+                    )}
+                    {vc.end_date && (
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {isExpired ? 'Expired' : 'Expires'} {format(parseISO(vc.end_date), 'MMM d, yyyy')}
+                        {!isExpired && daysLeft !== null && ` · ${daysLeft}d left`}
+                        {vc.notice_period_days && ` · ${vc.notice_period_days}d notice`}
+                      </p>
+                    )}
+                  </div>
+                  <button onClick={() => navigate(`/vendors/${vc.vendor_id}`)} className="ml-3 p-1.5 text-gray-400 hover:text-navy-900 hover:bg-gray-100 rounded-lg transition-colors">
+                    <ExternalLink size={13}/>
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Card>
+
       {/* Amendment History */}
       <AmendmentHistoryCard
         amendments={amendments}
@@ -621,6 +699,17 @@ export default function DealDetail() {
           approval={approval}
           quarterGroups={quarterGroups}
           amendments={amendments}
+        />
+      )}
+
+      {showAttachVendorModal && (
+        <AttachVendorContractModal
+          dealId={id}
+          onClose={() => setShowAttachVendorModal(false)}
+          onAttached={() => {
+            setShowAttachVendorModal(false)
+            supabase.from('vendor_contracts').select('*, vendors(name)').eq('deal_id', id).order('end_date').then(({ data }) => setLinkedVendorContracts(data || []))
+          }}
         />
       )}
 

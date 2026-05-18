@@ -16,6 +16,7 @@ function formatContext(ctx: any): string {
     lines.push(`Name: ${d.name}  |  Company: ${d.company}  |  Stage: ${d.stage}`)
     lines.push(`Type: ${d.deal_type === 'renewal' ? 'Renewal' : 'New Business'}  |  TBN Property: ${d.is_tbn_property ? 'Yes (excluded from commission)' : 'No'}`)
     if (d.contract_start) lines.push(`Contract Period: ${d.contract_start} → ${d.contract_end} (${d.contract_months || 12} months)`)
+    if (d.notice_period_days != null) lines.push(`Customer Notice Period: ${d.notice_period_days} days`)
     if (d.created_at) lines.push(`Added to SalesFlow: ${d.created_at}${d.created_by ? `  by ${d.created_by}` : ''}`)
     if (d.updated_at) lines.push(`Last Updated: ${d.updated_at}`)
     if (d.notes) lines.push(`Notes: ${d.notes}`)
@@ -66,6 +67,15 @@ function formatContext(ctx: any): string {
         if (a.auto_renewal != null) lines.push(`  Auto-renewal: ${a.auto_renewal ? 'Yes' : 'No'}${a.termination_notice_days ? ` (${a.termination_notice_days} day notice)` : ''}`)
         if (a.summary) lines.push(`  Summary: ${a.summary}`)
       }
+    })
+  }
+
+  if (ctx.vendor_contracts?.length) {
+    lines.push('\n── VENDOR CONTRACTS (backend contracts supporting this deal) ──')
+    ctx.vendor_contracts.forEach((vc: any) => {
+      const conflictNote = vc.conflict ? ` ⚠️ CONFLICT: vendor notice (${vc.notice_period_days}d) exceeds customer notice (${ctx.deal?.notice_period_days}d)` : ''
+      const renewalNote = vc.renewal_intent ? ' | Renewal planned' : ''
+      lines.push(`• ${vc.vendor}: "${vc.title}" | End: ${vc.end_date || 'N/A'} | Notice: ${vc.notice_period_days ?? 'N/A'} days${conflictNote}${renewalNote}`)
     })
   }
 

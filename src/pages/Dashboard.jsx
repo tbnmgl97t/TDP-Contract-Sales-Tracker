@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { differenceInDays, parseISO, format } from 'date-fns'
-import { TrendingUp, Handshake, DollarSign, Users, ArrowRight, Landmark, RefreshCw } from 'lucide-react'
+import { TrendingUp, Handshake, DollarSign, Users, ArrowRight, Landmark, RefreshCw, AlertTriangle } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import Card, { CardHeader } from '../components/ui/Card'
 import { StageBadge } from '../components/ui/Badge'
@@ -52,6 +52,7 @@ export default function Dashboard() {
   const [showEstimator, setShowEstimator] = useState(false)
   const [showContracted, setShowContracted] = useState(false)
   const [renewedDealIds, setRenewedDealIds] = useState(new Set())
+  const [vendorContractAlerts, setVendorContractAlerts] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const navigate = useNavigate()
@@ -134,6 +135,14 @@ export default function Dashboard() {
         }
       }
 
+      // Load vendor contract renewals
+      const { data: vendorContracts } = await supabase
+        .from('vendor_contracts')
+        .select('id, title, vendor_id, deal_id, end_date, notice_period_days, renewal_intent, vendors(name), deals(id, name, company_name, notice_period_days)')
+        .not('end_date', 'is', null)
+        .is('terminated_at', null)
+      setVendorContractAlerts(vendorContracts || [])
+
       setLoading(false)
     }
     load()
@@ -147,6 +156,21 @@ export default function Dashboard() {
       .filter((d) => d.daysLeft >= 0 && d.daysLeft <= RENEWAL_WINDOW_DAYS)
       .sort((a, b) => a.daysLeft - b.daysLeft)
   }, [deals])
+
+  const VENDOR_WINDOW_DAYS = 120
+
+  const upcomingVendorContracts = useMemo(() => {
+    const today = new Date()
+    return (vendorContractAlerts || [])
+      .map((vc) => {
+        const daysLeft = differenceInDays(parseISO(vc.end_date), today)
+        const hasConflict = vc.notice_period_days && vc.deals?.notice_period_days && vc.notice_period_days > vc.deals.notice_period_days
+        const talksByDays = vc.notice_period_days ? daysLeft - vc.notice_period_days : null
+        return { ...vc, daysLeft, hasConflict, talksByDays }
+      })
+      .filter((vc) => vc.daysLeft >= 0 && vc.daysLeft <= VENDOR_WINDOW_DAYS)
+      .sort((a, b) => a.daysLeft - b.daysLeft)
+  }, [vendorContractAlerts])
 
   if (loading) return <PageSpinner />
   if (error) return (
@@ -233,65 +257,113 @@ export default function Dashboard() {
         </div>
       </Card>
 
-      {/* Upcoming renewals */}
-      {upcomingRenewals.length > 0 && (
+      {/* Upcoming renewals — unified customer + vendor */}
+      {(upcomingRenewals.length > 0 || upcomingVendorContracts.length > 0) && (
         <Card>
-          <CardHeader title="Upcoming Renewals" subtitle={`${upcomingRenewals.length} contract${upcomingRenewals.length !== 1 ? 's' : ''} expiring within ${RENEWAL_WINDOW_DAYS} days`} />
-          <div className="divide-y divide-gray-50">
-            {upcomingRenewals.map((d) => {
-              const urgent = d.daysLeft <= 30
-              const soon   = d.daysLeft <= 60
-              const dotColor  = urgent ? 'bg-red-400'    : soon ? 'bg-amber-400'    : 'bg-green-400'
-              const badgeCls  = urgent ? 'bg-red-50 text-red-600' : soon ? 'bg-amber-50 text-amber-600' : 'bg-green-50 text-green-600'
-              const hasRenewal = renewedDealIds.has(d.id)
-              const fin = dealFinancials[d.id]
-              const displayAcv = fin?.dealAcv || d.acv || 0
-              const marginPct = fin ? (getMarginPct(fin.dealAcv, fin.cogs) ?? null) * 100 : null
-              return (
-                <div
-                  key={d.id}
-                  className="flex items-center gap-3 py-3 -mx-4 px-4"
-                >
-                  <button
-                    onClick={() => navigate(`/deals/${d.id}`)}
-                    className="flex items-center gap-3 flex-1 min-w-0 hover:opacity-75 transition-opacity text-left"
-                  >
-                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
+          <CardHeader
+            title="Upcoming Renewals"
+            subtitle={`${upcomingRenewals.length} customer · ${upcomingVendorContracts.length} vendor`}
+          />
+
+          {/* Conflicts first — amber banner */}
+          {upcomingVendorContracts.filter((vc) => vc.hasConflict).map((vc) => (
+            <div key={`conflict-${vc.id}`} className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+              <div className="flex items-center gap-1.5 font-semibold mb-0.5">
+                <AlertTriangle size={12}/> Notice Conflict
+              </div>
+              <span className="font-medium">{vc.vendors?.name}</span> requires {vc.notice_period_days}d notice but <span className="font-medium">{vc.deals?.name || vc.deals?.company_name}</span> customer contract is {vc.deals?.notice_period_days}d — renewal talks should have started {Math.abs(vc.talksByDays)}d {vc.talksByDays < 0 ? 'ago' : 'from now'}.
+            </div>
+          ))}
+
+          {/* Customer contracts */}
+          {upcomingRenewals.length > 0 && (
+            <>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 mb-2">Customer Contracts</p>
+              <div className="space-y-0 divide-y divide-gray-50 mb-4">
+                {upcomingRenewals.map((d) => {
+                  const urgent = d.daysLeft <= 30
+                  const soon   = d.daysLeft <= 60
+                  const dotColor  = urgent ? 'bg-red-400'    : soon ? 'bg-amber-400'    : 'bg-green-400'
+                  const badgeCls  = urgent ? 'bg-red-50 text-red-600' : soon ? 'bg-amber-50 text-amber-600' : 'bg-green-50 text-green-600'
+                  const hasRenewal = renewedDealIds.has(d.id)
+                  const fin = dealFinancials[d.id]
+                  const displayAcv = fin?.dealAcv || d.acv || 0
+                  const marginPct = fin ? (getMarginPct(fin.dealAcv, fin.cogs) ?? null) * 100 : null
+                  return (
+                    <div key={d.id} className="flex items-center gap-3 py-3 -mx-4 px-4">
+                      <button
+                        onClick={() => navigate(`/deals/${d.id}`)}
+                        className="flex items-center gap-3 flex-1 min-w-0 hover:opacity-75 transition-opacity text-left"
+                      >
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor}`} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-navy-900 truncate">{d.name}</p>
+                          <p className="text-xs text-gray-400 truncate">{d.company_name}</p>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className="text-sm font-bold text-navy-900">{fmt(displayAcv, 0)}<span className="text-xs font-normal text-gray-400"> /yr</span></p>
+                          <p className="text-xs text-gray-400">
+                            {format(parseISO(d.contract_end), 'MMM d, yyyy')}
+                            {isManager && marginPct != null && (
+                              <span className={`ml-2 font-medium ${marginPct >= 30 ? 'text-green-600' : marginPct >= 15 ? 'text-amber-500' : 'text-red-500'}`}>
+                                · {marginPct.toFixed(1)}% margin
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${badgeCls}`}>
+                          {d.daysLeft === 0 ? 'Today' : `${d.daysLeft}d`}
+                        </span>
+                      </button>
+                      {isManager && (
+                        hasRenewal
+                          ? <span className="text-xs text-primary-500 font-medium flex-shrink-0">Renewal in progress</span>
+                          : (
+                            <button
+                              onClick={() => navigate(`/deals/${d.id}`, { state: { openRenewal: true } })}
+                              className="flex items-center gap-1 text-xs font-medium text-primary-500 hover:text-primary-600 transition-colors flex-shrink-0 whitespace-nowrap"
+                            >
+                              <RefreshCw size={11} /> Start Renewal
+                            </button>
+                          )
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          )}
+
+          {/* Vendor contracts */}
+          {upcomingVendorContracts.length > 0 && (
+            <>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-gray-400 mb-2">Vendor Contracts</p>
+              <div className="space-y-2">
+                {upcomingVendorContracts.map((vc) => (
+                  <div key={vc.id} className={`flex items-center justify-between p-3 rounded-xl border ${vc.hasConflict ? 'border-amber-200 bg-amber-50/50' : 'border-gray-100'}`}>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-navy-900 truncate">{d.name}</p>
-                      <p className="text-xs text-gray-400 truncate">{d.company_name}</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-semibold text-navy-900">{vc.vendors?.name}</span>
+                        {vc.deals && <span className="text-xs text-gray-400">· {vc.deals.name || vc.deals.company_name}</span>}
+                        {vc.hasConflict && <span className="text-[11px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 font-medium">⚠ Notice conflict</span>}
+                        {vc.renewal_intent && <span className="text-[11px] bg-green-100 text-green-700 rounded px-1.5 py-0.5 font-medium">Renewal planned</span>}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-0.5 truncate">{vc.title}</p>
                     </div>
-                    <div className="text-right flex-shrink-0">
-                      <p className="text-sm font-bold text-navy-900">{fmt(displayAcv, 0)}<span className="text-xs font-normal text-gray-400"> /yr</span></p>
-                      <p className="text-xs text-gray-400">
-                        {format(parseISO(d.contract_end), 'MMM d, yyyy')}
-                        {isManager && marginPct != null && (
-                          <span className={`ml-2 font-medium ${marginPct >= 30 ? 'text-green-600' : marginPct >= 15 ? 'text-amber-500' : 'text-red-500'}`}>
-                            · {marginPct.toFixed(1)}% margin
-                          </span>
-                        )}
-                      </p>
+                    <div className="flex items-center gap-3 ml-3 flex-shrink-0">
+                      <div className="text-right">
+                        <p className="text-xs font-semibold text-navy-900">{vc.daysLeft}d</p>
+                        <p className="text-[11px] text-gray-400">{format(parseISO(vc.end_date), 'MMM d')}</p>
+                      </div>
+                      <button onClick={() => navigate(`/vendors/${vc.vendor_id}`)} className="p-1.5 text-gray-400 hover:text-navy-900 hover:bg-gray-100 rounded-lg transition-colors">
+                        <ArrowRight size={13}/>
+                      </button>
                     </div>
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${badgeCls}`}>
-                      {d.daysLeft === 0 ? 'Today' : `${d.daysLeft}d`}
-                    </span>
-                  </button>
-                  {isManager && (
-                    hasRenewal
-                      ? <span className="text-xs text-primary-500 font-medium flex-shrink-0">Renewal in progress</span>
-                      : (
-                        <button
-                          onClick={() => navigate(`/deals/${d.id}`, { state: { openRenewal: true } })}
-                          className="flex items-center gap-1 text-xs font-medium text-primary-500 hover:text-primary-600 transition-colors flex-shrink-0 whitespace-nowrap"
-                        >
-                          <RefreshCw size={11} /> Start Renewal
-                        </button>
-                      )
-                  )}
-                </div>
-              )
-            })}
-          </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </Card>
       )}
 

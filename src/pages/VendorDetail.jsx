@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Pencil, Trash2, Upload, Eye, Download, FileText, ExternalLink, ScanSearch, RefreshCw, CheckCircle2 } from 'lucide-react'
+import { ArrowLeft, Plus, Pencil, Trash2, Upload, Eye, Download, FileText, ExternalLink, ScanSearch, RefreshCw, CheckCircle2, Link } from 'lucide-react'
 import VendorBrainPanel from '../components/vendor/VendorBrainPanel'
 import { format } from 'date-fns'
 import { supabase } from '../lib/supabase'
@@ -194,6 +194,7 @@ function DocRow({ doc, onView, onDownload, onDelete, onReanalyze, reanalyzing })
 // ─── Contract card (with documents) ──────────────────────────────────────────
 function ContractCard({ contract: initialContract, vendorId, vendorName, onEdit, onDelete, onDocsChanged }) {
   const { profile, isManager } = useUser()
+  const navigate = useNavigate()
   const [contract, setContract] = useState(initialContract)
   const [docs, setDocs] = useState([])
   const [uploading, setUploading] = useState(false)
@@ -383,6 +384,11 @@ function ContractCard({ contract: initialContract, vendorId, vendorName, onEdit,
               {renewalPlanned && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700"><CheckCircle2 size={10} /> Planned for Renewal</span>}
               <Badge color={meta.color}>{meta.label}</Badge>
               {isTerminated && <Badge color="red">Terminated</Badge>}
+              {contract.deals && (
+                <button onClick={() => navigate(`/deals/${contract.deal_id}`)} className="text-xs bg-blue-50 text-blue-600 rounded px-2 py-0.5 font-medium hover:bg-blue-100 flex items-center gap-1">
+                  <Link size={10}/> {contract.deals.name || contract.deals.company_name}
+                </button>
+              )}
               {noticeActive && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-600">⚠ Notice period active</span>}
               {noticeWarning && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">Notice due in {daysUntilNotification} day{daysUntilNotification !== 1 ? 's' : ''}</span>}
               {extracting && <span className="text-xs text-gray-400 italic">Extracting notice period…</span>}
@@ -571,7 +577,7 @@ export default function VendorDetail() {
   async function load() {
     const [{ data: v }, { data: c }] = await Promise.all([
       supabase.from('vendors').select('*').eq('id', id).single(),
-      supabase.from('vendor_contracts').select('*').eq('vendor_id', id).order('created_at', { ascending: false }),
+      supabase.from('vendor_contracts').select('*, deal_id, deals(id, name, company_name)').eq('vendor_id', id).order('created_at', { ascending: false }),
     ])
     setVendor(v)
     setContracts(c || [])
