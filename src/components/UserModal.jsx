@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { supabase, adminClient } from '../lib/supabase'
+import { supabase } from '../lib/supabase'
 import Button from '../components/ui/Button'
 import Input, { Select } from '../components/ui/Input'
 
@@ -24,33 +24,33 @@ export default function UserModal({ user, onClose, onSave }) {
       if (!form.password) { setError('Password is required.'); return }
       if (form.password !== form.confirm_password) { setError('Passwords do not match.'); return }
       if (form.password.length < 8) { setError('Password must be at least 8 characters.'); return }
-      if (!adminClient) { setError('VITE_SUPABASE_SERVICE_ROLE_KEY is not set in .env.local'); return }
     }
     setSaving(true)
     // Map user_profiles role → people table role
     const peopleRole = form.role === 'manager' ? 'management' : form.role
 
     if (isNew) {
-      const { data, error } = await adminClient.auth.admin.createUser({
-        email: form.email,
-        password: form.password,
-        email_confirm: true,
-        user_metadata: { full_name: form.full_name },
-      })
-      if (error) { setError(error.message); setSaving(false); return }
-      await adminClient.from('user_profiles').insert({
-        user_id: data.user.id,
-        role: form.role,
-        email: form.email,
-        full_name: form.full_name,
-      })
-      // Upsert into people so they show up in deal team dropdowns
-      const { data: existing } = await supabase.from('people').select('id').eq('email', form.email).single()
-      if (existing) {
-        await supabase.from('people').update({ name: form.full_name, role: peopleRole, active: true }).eq('id', existing.id)
-      } else {
-        await supabase.from('people').insert({ name: form.full_name, email: form.email, role: peopleRole, active: true })
-      }
+      // Use edge function — admin API cannot be called from the browser
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-user`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`,
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({
+            email: form.email,
+            password: form.password,
+            full_name: form.full_name,
+            role: form.role,
+          }),
+        }
+      )
+      const result = await res.json()
+      if (!res.ok || result.error) { setError(result.error || 'Failed to create user'); setSaving(false); return }
     } else {
       await supabase.from('user_profiles').update({
         role: form.role,
