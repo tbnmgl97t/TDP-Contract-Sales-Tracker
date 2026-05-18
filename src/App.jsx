@@ -4,6 +4,7 @@ import { supabase } from './lib/supabase'
 import { UserProvider, useUser } from './contexts/UserContext'
 import Layout from './components/layout/Layout'
 import { PageSpinner } from './components/ui/Spinner'
+import ChunkErrorBoundary from './components/ChunkErrorBoundary'
 
 // Route-level code splitting — each page loads only when first visited
 const Login              = lazy(() => import('./pages/Login'))
@@ -66,6 +67,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <UserProvider>
+        <ChunkErrorBoundary>
         <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gray-50"><PageSpinner /></div>}>
           <Routes>
             <Route path="/login" element={session ? <Navigate to="/dashboard" replace /> : <Login />} />
@@ -105,6 +107,7 @@ export default function App() {
             </Route>
           </Routes>
         </Suspense>
+        </ChunkErrorBoundary>
       </UserProvider>
     </BrowserRouter>
   )
