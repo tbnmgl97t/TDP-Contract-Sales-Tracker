@@ -17,10 +17,9 @@ Deno.serve(async (req) => {
 
     // Verify caller is an authenticated manager
     const authHeader = req.headers.get('authorization') || ''
-    const callerClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { authorization: authHeader } },
-    })
-    const { data: { user: caller }, error: authError } = await callerClient.auth.getUser()
+    const token = authHeader.replace('Bearer ', '')
+    const callerClient = createClient(supabaseUrl, anonKey)
+    const { data: { user: caller }, error: authError } = await callerClient.auth.getUser(token)
     if (authError || !caller) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
