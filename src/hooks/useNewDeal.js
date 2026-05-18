@@ -170,7 +170,7 @@ export function useNewDeal(editId) {
       if (isEdit) {
         await supabase.from('deals').update(dealData).eq('id', editId)
         await supabase.from('deal_products').delete().eq('deal_id', editId).neq('status', 'cancelled')
-        await supabase.from('deal_team').delete().eq('deal_id', editId)
+        // Don't blanket-delete deal_team — diff instead to avoid false audit log entries
         await supabase.from('deal_partners').delete().eq('deal_id', editId)
       } else {
         const { data: { session } } = await supabase.auth.getSession()
@@ -205,11 +205,46 @@ export function useNewDeal(editId) {
         }
       }
 
-      // Insert team
+      // Diff team members — only insert/delete what actually changed
       const teamRows = teamMembers
         .filter((m) => m.person_id)
         .map(({ _id, id: _dbId, people: _, ...m }) => ({ ...m, deal_id: dealId }))
-      if (teamRows.length) await supabase.from('deal_team').insert(teamRows)
+
+      if (isEdit) {
+        const { data: existingTeam } = await supabase.from('deal_team').select('*').eq('deal_id', dealId)
+        const existing = existingTeam || []
+        const newPersonIds = new Set(teamRows.map((r) => r.person_id))
+        const existingPersonIds = new Set(existing.map((m) => m.person_id))
+
+        // Remove members no longer on the team
+        const toRemove = existing.filter((m) => !newPersonIds.has(m.person_id))
+        if (toRemove.length) {
+          await supabase.from('deal_team').delete().eq('deal_id', dealId).in('person_id', toRemove.map((m) => m.person_id))
+        }
+
+        // Add genuinely new members
+        const toAdd = teamRows.filter((r) => !existingPersonIds.has(r.person_id))
+        if (toAdd.length) await supabase.from('deal_team').insert(toAdd)
+
+        // Update members whose fields changed (role, commission_percent, spif_amount)
+        for (const row of teamRows) {
+          const prev = existing.find((m) => m.person_id === row.person_id)
+          if (!prev) continue
+          if (
+            prev.role !== row.role ||
+            prev.commission_percent !== row.commission_percent ||
+            prev.spif_amount !== row.spif_amount
+          ) {
+            await supabase.from('deal_team').update({
+              role: row.role,
+              commission_percent: row.commission_percent,
+              spif_amount: row.spif_amount,
+            }).eq('deal_id', dealId).eq('person_id', row.person_id)
+          }
+        }
+      } else {
+        if (teamRows.length) await supabase.from('deal_team').insert(teamRows)
+      }
 
       // Insert partners with stacked commission amounts
       const partnerRows = stackedPartners.map(({ _id, id: _dbId, partners: _, ...dp }, idx) => ({
