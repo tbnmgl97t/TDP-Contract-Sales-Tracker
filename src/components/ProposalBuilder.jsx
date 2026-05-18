@@ -213,9 +213,11 @@ export default function ProposalBuilder({ deal, dealProducts, dealPartners, deal
   const [savedOrderDefault, setSavedOrderDefault]   = useState(false)
   const [pickerDefaults, setPickerDefaults] = useState([]) // rows from proposal_default_slides for the picker
   const [editorExpanded, setEditorExpanded] = useState(false)
+  const [staleConflict, setStaleConflict] = useState(false) // true = show overwrite warning
   const pdfUrlRef    = useRef(null)
   const formPanelRef = useRef(null)
   const slidesRef    = useRef(slides)
+  const loadedAtRef  = useRef(null) // max updated_at when slides were last loaded/saved
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
 
@@ -255,6 +257,9 @@ export default function ProposalBuilder({ deal, dealProducts, dealPartners, deal
       if (saved && saved.length > 0) {
         setSlides(saved.map((r) => ({ id: r.id, slide_key: r.slide_key, position: r.position, fields: r.fields || {}, label: r.label || '' })))
         setActiveSlideId(saved[0].id)
+        // Record the freshest timestamp so we can detect concurrent edits on save
+        const maxUpdatedAt = saved.reduce((max, r) => (!max || r.updated_at > max ? r.updated_at : max), null)
+        loadedAtRef.current = maxUpdatedAt
         setLoadState('ready')
         return
       }
@@ -401,12 +406,30 @@ export default function ProposalBuilder({ deal, dealProducts, dealPartners, deal
 
   // ── Save ───────────────────────────────────────────────────────────────────
 
-  async function saveProposal() {
+  async function saveProposal({ force = false } = {}) {
     setSaving(true)
 
     // Use ref so we always get the latest reordered slides, not a stale closure
     const currentSlides = slidesRef.current
     const isFirstSave = currentSlides.every((s) => !s.id)
+
+    // ── Stale-save check ──────────────────────────────────────────────────────
+    // If we have a known load timestamp and this isn't a forced overwrite, check
+    // whether someone else saved after we opened the builder.
+    if (!force && loadedAtRef.current) {
+      const { data: latest } = await supabase
+        .from('proposal_slides')
+        .select('updated_at')
+        .eq('deal_id', deal.id)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .single()
+      if (latest?.updated_at && latest.updated_at > loadedAtRef.current) {
+        setSaving(false)
+        setStaleConflict(true)
+        return
+      }
+    }
 
     // Delete existing v2 slides for this deal
     await supabase.from('proposal_slides').delete().eq('deal_id', deal.id)
@@ -448,6 +471,13 @@ export default function ProposalBuilder({ deal, dealProducts, dealPartners, deal
       recordId:    saved?.[0]?.id || 'proposal',
     })
     onLogged?.()
+
+    // Update our "loaded at" baseline to now so subsequent saves in the same
+    // session don't false-positive against our own write.
+    if (saved?.length) {
+      const maxUpdatedAt = saved.reduce((max, r) => (!max || r.updated_at > max ? r.updated_at : max), null)
+      loadedAtRef.current = maxUpdatedAt
+    }
 
     setDirty(false)
     setSaving(false)
@@ -883,6 +913,55 @@ export default function ProposalBuilder({ deal, dealProducts, dealPartners, deal
           onSelect={handleAssetSelect}
           onClose={() => setShowAssets(false)}
         />
+      )}
+
+      {/* Stale-save conflict warning */}
+      {staleConflict && (
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-yellow-50 flex items-center justify-center flex-shrink-0">
+                <svg className="w-5 h-5 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3m0 3h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-navy-900">Proposal changed by someone else</p>
+                <p className="text-sm text-gray-500 mt-1">
+                  This proposal was saved by another user after you opened it. Saving now will overwrite their changes.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button
+                className="flex-1 text-sm font-medium border border-gray-200 rounded-xl px-4 py-2.5 hover:bg-gray-50 transition-colors"
+                onClick={async () => {
+                  setStaleConflict(false)
+                  // Reload slides from DB so they see the latest version
+                  const { data } = await supabase
+                    .from('proposal_slides')
+                    .select('*')
+                    .eq('deal_id', deal.id)
+                    .order('position')
+                  if (data?.length) {
+                    setSlides(data.map((r) => ({ id: r.id, slide_key: r.slide_key, position: r.position, fields: r.fields || {}, label: r.label || '' })))
+                    const maxUpdatedAt = data.reduce((max, r) => (!max || r.updated_at > max ? r.updated_at : max), null)
+                    loadedAtRef.current = maxUpdatedAt
+                    setDirty(false)
+                  }
+                }}
+              >
+                Discard my changes
+              </button>
+              <button
+                className="flex-1 text-sm font-medium bg-navy-900 text-white rounded-xl px-4 py-2.5 hover:bg-navy-800 transition-colors"
+                onClick={() => { setStaleConflict(false); saveProposal({ force: true }) }}
+              >
+                Save anyway
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>,
     document.body
