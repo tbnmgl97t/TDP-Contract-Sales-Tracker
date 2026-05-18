@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, LayoutList, Columns, ChevronRight, Trash2, RotateCcw, ChevronLeft, ChevronRight as ChevronRightIcon, CheckCircle2, Clock, RefreshCw } from 'lucide-react'
 import { supabase } from '../lib/supabase'
@@ -101,6 +101,27 @@ function DealCard({ deal, onClick }) {
 }
 
 function KanbanView({ deals, onDealClick, onStageChange }) {
+  const scrollRef = useRef(null)
+  const [canScrollRight, setCanScrollRight] = useState(false)
+
+  const checkScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4)
+  }, [])
+
+  useEffect(() => {
+    checkScroll()
+    const el = scrollRef.current
+    if (!el) return
+    el.addEventListener('scroll', checkScroll, { passive: true })
+    window.addEventListener('resize', checkScroll)
+    return () => { el.removeEventListener('scroll', checkScroll); window.removeEventListener('resize', checkScroll) }
+  }, [checkScroll])
+
+  // Re-check when deals change (columns may have filled/emptied)
+  useEffect(() => { checkScroll() }, [deals, checkScroll])
+
   async function handleDrop(e, targetStage) {
     const dealId = e.dataTransfer.getData('dealId')
     if (!dealId) return
@@ -109,7 +130,11 @@ function KanbanView({ deals, onDealClick, onStageChange }) {
   }
 
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4 min-h-[70vh]">
+    <div className="relative">
+    {canScrollRight && (
+      <div className="absolute right-0 top-0 bottom-4 w-16 bg-gradient-to-l from-gray-50 to-transparent pointer-events-none z-10" />
+    )}
+    <div ref={scrollRef} className="flex gap-4 overflow-x-auto pb-4 min-h-[70vh] kanban-scroll">
       {DEAL_STAGES.filter((s) => !KANBAN_HIDDEN_STAGES.includes(s.key)).map((stage) => {
         const stageDeals = deals.filter((d) => d.stage === stage.key)
         const stageValue = stageDeals.reduce((s, d) => s + (d.acv || 0), 0)
@@ -137,6 +162,7 @@ function KanbanView({ deals, onDealClick, onStageChange }) {
           </div>
         )
       })}
+    </div>
     </div>
   )
 }

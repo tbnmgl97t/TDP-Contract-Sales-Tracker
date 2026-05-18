@@ -45,4 +45,21 @@
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
+  .kanban-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  .kanban-scroll::-webkit-scrollbar {
+    height: 6px;
+  }
+  .kanban-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .kanban-scroll::-webkit-scrollbar-thumb {
+    background-color: #cbd5e1;
+    border-radius: 3px;
+  }
+  .kanban-scroll::-webkit-scrollbar-thumb:hover {
+    background-color: #94a3b8;
+  }
 }
