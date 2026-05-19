@@ -1000,11 +1000,11 @@ export default function Receivables() {
               {/* Match review table */}
               <Card padding={false}>
                 {/* Table header */}
-                <div className="grid grid-cols-[2fr_1.5fr_1.5fr_80px_1fr] gap-3 px-5 py-2.5 border-b border-gray-100 bg-gray-50/60">
+                <div className="grid grid-cols-[2fr_1.5fr_1.5fr_60px_220px] gap-3 px-5 py-2.5 border-b border-gray-100 bg-gray-50/60">
                   <span className="text-xs uppercase tracking-wide text-gray-400">AR Customer Name</span>
                   <span className="text-xs uppercase tracking-wide text-gray-400">Current Match</span>
                   <span className="text-xs uppercase tracking-wide text-gray-400">Best Suggestion</span>
-                  <span className="text-xs uppercase tracking-wide text-gray-400 text-right">Confidence</span>
+                  <span className="text-xs uppercase tracking-wide text-gray-400 text-right">Conf.</span>
                   <span className="text-xs uppercase tracking-wide text-gray-400">Action</span>
                 </div>
 
@@ -1017,7 +1017,7 @@ export default function Receivables() {
                     {filteredMatchList.map((m) => {
                       const isChangeOpen = changeOpenFor === m.customer_name
                       return (
-                        <div key={m.customer_name} className="grid grid-cols-[2fr_1.5fr_1.5fr_80px_1fr] gap-3 px-5 py-3.5 items-start hover:bg-gray-50/40 transition-colors">
+                        <div key={m.customer_name} className="grid grid-cols-[2fr_1.5fr_1.5fr_60px_220px] gap-3 px-5 py-2.5 items-center hover:bg-gray-50/40 transition-colors">
                           {/* AR Customer Name */}
                           <p className="text-sm font-medium text-navy-900 break-words">{m.customer_name}</p>
 
@@ -1050,132 +1050,75 @@ export default function Receivables() {
                             </span>
                           </div>
 
-                          {/* Action */}
-                          <div className="flex flex-col gap-1.5 min-w-0">
-                            {m.status === 'pending' && (
+                          {/* Action — always one compact horizontal row */}
+                          <div className="flex items-center gap-1.5 flex-nowrap">
+                            {(m.status === 'pending' || m.status === 'auto_matched') && !isChangeOpen && (
                               <>
                                 {m.suggested_company && (
-                                  <Button
-                                    size="xs"
-                                    variant="primary"
+                                  <button
                                     onClick={() => approveMatch(m.customer_name, m.suggested_company.id, m.suggested_score)}
+                                    className="text-xs font-medium px-2.5 py-1 rounded-lg bg-primary-500 text-white hover:bg-primary-600 transition-colors whitespace-nowrap"
                                   >
-                                    Approve {m.suggested_company.name}
-                                  </Button>
+                                    ✓ Approve
+                                  </button>
                                 )}
-                                <div className="flex gap-1.5 flex-wrap">
-                                  <Button
-                                    size="xs"
-                                    variant="secondary"
-                                    onClick={() => rejectMatch(m.customer_name)}
+                                {m.status === 'auto_matched' && !m.suggested_company && (
+                                  <button
+                                    onClick={() => approveMatch(m.customer_name, m.current_company_id, 1)}
+                                    className="text-xs font-medium px-2.5 py-1 rounded-lg bg-primary-500 text-white hover:bg-primary-600 transition-colors whitespace-nowrap"
                                   >
-                                    No Match
-                                  </Button>
-                                  <select
-                                    className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white text-navy-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
-                                    value=""
-                                    onChange={(e) => {
-                                      if (e.target.value) {
-                                        approveMatch(m.customer_name, e.target.value, 0)
-                                      }
-                                    }}
-                                  >
-                                    <option value="">Override…</option>
-                                    {allCompanies.map(c => (
-                                      <option key={c.id} value={c.id}>{c.name}</option>
-                                    ))}
-                                  </select>
-                                </div>
+                                    ✓ Confirm
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => rejectMatch(m.customer_name)}
+                                  className="text-xs font-medium px-2.5 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors whitespace-nowrap"
+                                >
+                                  No Match
+                                </button>
+                                <select
+                                  className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white text-navy-900 focus:outline-none focus:ring-1 focus:ring-primary-300 max-w-[100px]"
+                                  value=""
+                                  onChange={(e) => { if (e.target.value) approveMatch(m.customer_name, e.target.value, 0) }}
+                                >
+                                  <option value="">Assign…</option>
+                                  {allCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                </select>
                               </>
                             )}
 
-                            {m.status === 'auto_matched' && (
+                            {(m.status === 'pending' || m.status === 'auto_matched') && isChangeOpen && (
                               <>
-                                {!isChangeOpen ? (
-                                  <div className="flex gap-1.5 flex-wrap">
-                                    <Button
-                                      size="xs"
-                                      variant="primary"
-                                      onClick={() => approveMatch(m.customer_name, m.current_company_id, m.suggested_score)}
-                                    >
-                                      ✓ Confirm
-                                    </Button>
-                                    <Button
-                                      size="xs"
-                                      variant="secondary"
-                                      onClick={() => { setChangeOpenFor(m.customer_name); setChangeValue(m.current_company_id || '') }}
-                                    >
-                                      Change
-                                    </Button>
-                                    <Button
-                                      size="xs"
-                                      variant="secondary"
-                                      onClick={() => rejectMatch(m.customer_name)}
-                                    >
-                                      No Match
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <div className="flex gap-1.5 flex-wrap items-center">
-                                    <select
-                                      className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white text-navy-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
-                                      value={changeValue}
-                                      onChange={(e) => setChangeValue(e.target.value)}
-                                    >
-                                      <option value="">Select…</option>
-                                      {allCompanies.map(c => (
-                                        <option key={c.id} value={c.id}>{c.name}</option>
-                                      ))}
-                                    </select>
-                                    <Button
-                                      size="xs"
-                                      variant="primary"
-                                      onClick={() => {
-                                        if (changeValue) {
-                                          approveMatch(m.customer_name, changeValue, 0)
-                                          setChangeOpenFor(null)
-                                        }
-                                      }}
-                                    >
-                                      Apply
-                                    </Button>
-                                    <button
-                                      className="text-xs text-gray-400 hover:text-gray-600"
-                                      onClick={() => setChangeOpenFor(null)}
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                )}
+                                <select
+                                  className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white text-navy-900 focus:outline-none focus:ring-1 focus:ring-primary-300 max-w-[120px]"
+                                  value={changeValue}
+                                  onChange={(e) => setChangeValue(e.target.value)}
+                                >
+                                  <option value="">Select…</option>
+                                  {allCompanies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                </select>
+                                <button
+                                  onClick={() => { if (changeValue) { approveMatch(m.customer_name, changeValue, 0); setChangeOpenFor(null) } }}
+                                  className="text-xs font-medium px-2.5 py-1 rounded-lg bg-primary-500 text-white hover:bg-primary-600 transition-colors"
+                                >
+                                  Apply
+                                </button>
+                                <button onClick={() => setChangeOpenFor(null)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
                               </>
                             )}
 
                             {m.status === 'approved' && (
-                              <div className="flex items-center gap-2">
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">
-                                  ✓ Approved
-                                </span>
-                                <button
-                                  className="text-xs text-gray-400 hover:text-gray-600 hover:underline"
-                                  onClick={() => undoMatch(m.customer_name)}
-                                >
-                                  Undo
-                                </button>
-                              </div>
+                              <>
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 whitespace-nowrap">✓ Approved</span>
+                                <button onClick={() => undoMatch(m.customer_name)} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">Undo</button>
+                              </>
                             )}
 
                             {m.status === 'rejected' && (
-                              <div className="flex items-center gap-2">
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
-                                  No Match
-                                </span>
-                                <button
-                                  className="text-xs text-gray-400 hover:text-gray-600 hover:underline"
-                                  onClick={() => undoMatch(m.customer_name)}
-                                >
-                                  Undo
-                                </button>
-                              </div>
+                              <>
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500 whitespace-nowrap">No Match</span>
+                                <button onClick={() => undoMatch(m.customer_name)} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">Undo</button>
+                              </>
                             )}
                           </div>
                         </div>
