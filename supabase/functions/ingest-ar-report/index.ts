@@ -120,23 +120,10 @@ Deno.serve(async (req) => {
       base64Pdf = btoa(String.fromCharCode(...new Uint8Array(pdfBytes)))
     }
 
-    // Step 4: Call Claude to extract the AR table as JSON
+    // Step 4: Call Claude to extract the AR table as JSON (with up to 3 attempts)
     const anthropic = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY')! })
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8192,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'document',
-              source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf },
-            } as any,
-            {
-              type: 'text',
-              text: `Extract every data row from this AR aging report and return ONLY a valid JSON array — no markdown, no explanation.
+    const extractPrompt = `Extract every data row from this AR aging report and return ONLY a valid JSON array — no markdown, no explanation, no preamble, no trailing text.
 
 Each object must have exactly these fields:
 {
@@ -164,30 +151,53 @@ Rules:
 - Dates in YYYY-MM-DD format.
 - Empty/zero bucket cells → 0.
 - Skip header rows, subtotals, and grand total rows.
-- Return ONLY the JSON array starting with [ and ending with ].`,
-            },
-          ],
-        },
-      ],
-    })
+- Your entire response must be only the JSON array starting with [ and ending with ]. Nothing else.`
 
-    const rawText = response.content[0].type === 'text' ? response.content[0].text : ''
-    const jsonText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-
-    let rows: ArRow[]
-    try {
-      rows = JSON.parse(jsonText)
-    } catch {
-      return new Response(
-        JSON.stringify({ error: 'Claude returned unparseable JSON', raw: jsonText.slice(0, 500) }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+    function extractJsonArray(raw: string): ArRow[] | null {
+      // Find the outermost [ ... ] regardless of any surrounding text
+      const start = raw.indexOf('[')
+      const end = raw.lastIndexOf(']')
+      if (start === -1 || end === -1 || end <= start) return null
+      try {
+        return JSON.parse(raw.slice(start, end + 1))
+      } catch {
+        return null
+      }
     }
 
-    if (!Array.isArray(rows) || rows.length === 0) {
+    let rows: ArRow[] | null = null
+    let lastRaw = ''
+    const maxAttempts = 3
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 8192,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'document',
+                source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf },
+              } as any,
+              { type: 'text', text: extractPrompt },
+            ],
+          },
+        ],
+      })
+
+      lastRaw = response.content[0].type === 'text' ? response.content[0].text : ''
+      rows = extractJsonArray(lastRaw)
+      if (rows && Array.isArray(rows) && rows.length > 0) break
+      // Short pause before retry
+      if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, 1000))
+    }
+
+    if (!rows || !Array.isArray(rows) || rows.length === 0) {
       return new Response(
-        JSON.stringify({ error: 'No rows extracted from PDF', raw: jsonText.slice(0, 200) }),
-        { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Claude returned unparseable JSON after 3 attempts', raw: lastRaw.slice(0, 500) }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
@@ -238,7 +248,7 @@ Rules:
 
     const { error: upsertError } = await supabase
       .from('receivables')
-      .upsert(records, { onConflict: 'transaction_number' })
+      .upsert(records, { onConflict: 'transaction_number,as_of_date' })
 
     if (upsertError) {
       return new Response(
