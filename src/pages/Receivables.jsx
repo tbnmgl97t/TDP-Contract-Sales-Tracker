@@ -55,24 +55,99 @@ const STAT_COLORS = {
   red: 'text-red-600',
 }
 
+// ── Fuzzy matching ──────────────────────────────────────────────────────────
+
+const STRIP_WORDS = new Set([
+  'inc','llc','corp','ltd','co','company','group','the','broadcasting',
+  'network','media','digital','tv','channel','entertainment','studios',
+  'productions','international','global','national','american','systems'
+])
+
+function normalizeName(name) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .split(/\s+/)
+    .filter(t => t.length > 1 && !STRIP_WORDS.has(t))
+    .join(' ')
+    .trim()
+}
+
+function matchScore(arName, companyName) {
+  const a = normalizeName(arName)
+  const b = normalizeName(companyName)
+  if (!a || !b) return 0
+  if (a === b) return 1
+  // Jaccard on token sets
+  const tA = new Set(a.split(' '))
+  const tB = new Set(b.split(' '))
+  const intersection = [...tA].filter(t => tB.has(t)).length
+  const union = new Set([...tA, ...tB]).size
+  const jaccard = union === 0 ? 0 : intersection / union
+  // Substring bonus
+  const containsBonus = (a.includes(b) || b.includes(a)) ? 0.2 : 0
+  return Math.min(1, jaccard + containsBonus)
+}
+
+function findBestMatch(arName, companies) {
+  let best = null
+  let bestScore = 0
+  for (const c of companies) {
+    const score = matchScore(arName, c.name)
+    if (score > bestScore) { bestScore = score; best = c }
+  }
+  return { company: best, score: bestScore }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
 export default function Receivables() {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [customerFilter, setCustomerFilter] = useState('all')
+  const [linkStatusFilter, setLinkStatusFilter] = useState('all') // 'all' | 'contracted' | 'matched' | 'unmatched'
   const [tab, setTab] = useState('all') // 'all' | 'overdue' | 'critical'
   const [uploading, setUploading] = useState(false)
   const [importResult, setImportResult] = useState(null) // { imported, matched, unmatched } | { error }
   const fileInputRef = useRef(null)
 
   // Collections state
-  const [mainView, setMainView] = useState('aging') // 'aging' | 'collections'
+  const [mainView, setMainView] = useState('aging') // 'aging' | 'collections' | 'matches'
   const [paymentEvents, setPaymentEvents] = useState([])
   const [collectionsLoading, setCollectionsLoading] = useState(false)
   const collectionsLoaded = useRef(false)
 
+  // Contracted company_ids (for link-status filter)
+  const [contractedCompanyIds, setContractedCompanyIds] = useState(new Set())
+
+  // Match review state
+  const [matchList, setMatchList] = useState([])
+  const [allCompanies, setAllCompanies] = useState([])
+  const [matchDataLoaded, setMatchDataLoaded] = useState(false)
+  const [matchLoading, setMatchLoading] = useState(false)
+  const [matchStatusFilter, setMatchStatusFilter] = useState('all') // 'all' | 'pending' | 'auto_matched' | 'approved' | 'rejected'
+  // Tracks which rows have their "change company" dropdown open
+  const [changeOpenFor, setChangeOpenFor] = useState(null) // customer_name | null
+  const [changeValue, setChangeValue] = useState('')
+
+  // Pending match count for badge
+  const pendingMatchCount = useMemo(() => {
+    if (!matchDataLoaded) return null
+    return matchList.filter(m => m.status === 'pending' || m.status === 'auto_matched').length
+  }, [matchList, matchDataLoaded])
+
   useEffect(() => {
     async function load() {
       setLoading(true)
+
+      // Load deals to build contracted set
+      const { data: dealsData } = await supabase
+        .from('deals')
+        .select('company_id, stage')
+        .eq('stage', 'contracted')
+      const contracted = new Set((dealsData || []).map(d => d.company_id).filter(Boolean))
+      setContractedCompanyIds(contracted)
+
       // Get the global latest as_of_date across all receivables
       const { data: latestRow } = await supabase
         .from('receivables')
@@ -110,10 +185,111 @@ export default function Receivables() {
     setCollectionsLoading(false)
   }
 
+  async function loadMatchData() {
+    setMatchLoading(true)
+
+    // 1. All distinct customer names + their current company_id from receivables
+    const { data: customers } = await supabase
+      .from('receivables')
+      .select('customer_name, company_id')
+      .order('customer_name')
+
+    // Deduplicate by customer_name, keep company_id if any
+    const customerMap = new Map()
+    for (const r of (customers || [])) {
+      if (!customerMap.has(r.customer_name) || r.company_id) {
+        customerMap.set(r.customer_name, r.company_id)
+      }
+    }
+
+    // 2. All companies
+    const { data: companies } = await supabase.from('companies').select('id, name')
+
+    // 3. Existing approved/rejected decisions from receivables_customer_matches
+    const { data: existing } = await supabase.from('receivables_customer_matches').select('*')
+    const decisionMap = new Map((existing || []).map(r => [r.customer_name, r]))
+
+    // 4. Build review list
+    const list = []
+    for (const [customerName, currentCompanyId] of customerMap) {
+      const decision = decisionMap.get(customerName)
+      const { company: suggestedCompany, score } = findBestMatch(customerName, companies || [])
+
+      list.push({
+        customer_name: customerName,
+        current_company_id: currentCompanyId,
+        current_company: (companies || []).find(c => c.id === currentCompanyId) || null,
+        suggested_company: suggestedCompany,
+        suggested_score: score,
+        status: decision?.status || (currentCompanyId ? 'auto_matched' : 'pending'),
+        decision_company_id: decision?.company_id || null,
+      })
+    }
+
+    setMatchList(list)
+    setAllCompanies(companies || [])
+    setMatchDataLoaded(true)
+    setMatchLoading(false)
+  }
+
   function handleMainViewChange(view) {
     setMainView(view)
     if (view === 'collections') {
       loadCollections()
+    }
+    if (view === 'matches' && !matchDataLoaded) {
+      loadMatchData()
+    }
+  }
+
+  async function approveMatch(customerName, companyId, score) {
+    // 1. Update all receivables rows for this customer
+    await supabase.from('receivables').update({ company_id: companyId }).eq('customer_name', customerName)
+    // 2. Upsert into receivables_customer_matches
+    await supabase.from('receivables_customer_matches').upsert({
+      customer_name: customerName,
+      company_id: companyId,
+      confidence: score,
+      status: 'approved',
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'customer_name' })
+    // 3. Update local state
+    const company = allCompanies.find(c => c.id === companyId) || null
+    setMatchList(prev => prev.map(m => m.customer_name === customerName
+      ? { ...m, current_company_id: companyId, current_company: company, status: 'approved' }
+      : m
+    ))
+  }
+
+  async function rejectMatch(customerName) {
+    await supabase.from('receivables').update({ company_id: null }).eq('customer_name', customerName)
+    await supabase.from('receivables_customer_matches').upsert({
+      customer_name: customerName,
+      company_id: null,
+      confidence: 0,
+      status: 'rejected',
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'customer_name' })
+    setMatchList(prev => prev.map(m => m.customer_name === customerName
+      ? { ...m, current_company_id: null, current_company: null, status: 'rejected' }
+      : m
+    ))
+  }
+
+  async function undoMatch(customerName) {
+    await supabase.from('receivables_customer_matches').delete().eq('customer_name', customerName)
+    setMatchList(prev => prev.map(m => m.customer_name === customerName
+      ? { ...m, status: m.current_company_id ? 'auto_matched' : 'pending' }
+      : m
+    ))
+  }
+
+  async function bulkApproveHighConfidence() {
+    const eligible = matchList.filter(
+      m => (m.status === 'pending' || m.status === 'auto_matched') && m.suggested_score >= 0.85 && m.suggested_company
+    )
+    for (const m of eligible) {
+      await approveMatch(m.customer_name, m.suggested_company.id, m.suggested_score)
     }
   }
 
@@ -131,12 +307,28 @@ export default function Receivables() {
     return names
   }, [rows])
 
-  // Apply filters
+  // Apply link status filter
+  function applyLinkStatusFilter(rowList) {
+    if (linkStatusFilter === 'all') return rowList
+    if (linkStatusFilter === 'contracted') {
+      return rowList.filter(r => r.company_id && contractedCompanyIds.has(r.company_id))
+    }
+    if (linkStatusFilter === 'matched') {
+      return rowList.filter(r => r.company_id && !contractedCompanyIds.has(r.company_id))
+    }
+    if (linkStatusFilter === 'unmatched') {
+      return rowList.filter(r => !r.company_id)
+    }
+    return rowList
+  }
+
+  // Apply filters for AR aging
   const filteredRows = useMemo(() => {
     let result = rows
     if (customerFilter !== 'all') {
       result = result.filter((r) => r.customer_name === customerFilter)
     }
+    result = applyLinkStatusFilter(result)
     if (tab === 'overdue') {
       result = result.filter(
         (r) => r.bucket_1_30 > 0 || r.bucket_31_60 > 0 || r.bucket_61_90 > 0 || r.bucket_91_120 > 0 || r.bucket_121_150 > 0 || r.bucket_151_plus > 0
@@ -149,9 +341,10 @@ export default function Receivables() {
     }
     // Sort by aging bucket descending (most overdue first)
     return [...result].sort((a, b) => agingSortKey(b) - agingSortKey(a))
-  }, [rows, customerFilter, tab])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, customerFilter, linkStatusFilter, tab, contractedCompanyIds])
 
-  // Summary stats
+  // Summary stats (always over all rows, not filtered)
   const stats = useMemo(() => {
     const total = rows.reduce((s, r) => s + (r.invoice_amount || 0), 0)
     const current = rows.reduce((s, r) => s + (r.bucket_current || 0), 0)
@@ -196,10 +389,29 @@ export default function Receivables() {
     return { ytd, thisMonth, lastMonth }
   }, [paymentEvents])
 
+  // Collections: filtered by link status
+  const filteredPaymentEvents = useMemo(() => {
+    if (linkStatusFilter === 'all') return paymentEvents
+    // We need company_id per customer_name — build a map from rows
+    const companyByCustomer = new Map()
+    for (const r of rows) {
+      if (!companyByCustomer.has(r.customer_name)) {
+        companyByCustomer.set(r.customer_name, r.company_id)
+      }
+    }
+    return paymentEvents.filter(evt => {
+      const cid = companyByCustomer.get(evt.customer_name)
+      if (linkStatusFilter === 'contracted') return cid && contractedCompanyIds.has(cid)
+      if (linkStatusFilter === 'matched') return cid && !contractedCompanyIds.has(cid)
+      if (linkStatusFilter === 'unmatched') return !cid
+      return true
+    })
+  }, [paymentEvents, linkStatusFilter, rows, contractedCompanyIds])
+
   // Collections: group by week (period_end)
   const weeklyCollections = useMemo(() => {
     const map = new Map()
-    for (const evt of paymentEvents) {
+    for (const evt of filteredPaymentEvents) {
       const key = evt.period_end
       if (!map.has(key)) map.set(key, { periodEnd: key, collected: 0, invoices: 0, customers: new Set() })
       const entry = map.get(key)
@@ -209,12 +421,12 @@ export default function Receivables() {
     }
     return Array.from(map.values())
       .sort((a, b) => b.periodEnd.localeCompare(a.periodEnd))
-  }, [paymentEvents])
+  }, [filteredPaymentEvents])
 
   // Collections: group by customer
   const byCustomer = useMemo(() => {
     const map = new Map()
-    for (const evt of paymentEvents) {
+    for (const evt of filteredPaymentEvents) {
       const key = evt.customer_name
       if (!map.has(key)) map.set(key, { customer: key, totalCollected: 0, invoices: 0, lastPayment: null })
       const entry = map.get(key)
@@ -225,12 +437,12 @@ export default function Receivables() {
       }
     }
     return Array.from(map.values()).sort((a, b) => b.totalCollected - a.totalCollected)
-  }, [paymentEvents])
+  }, [filteredPaymentEvents])
 
   // Collections: group payment events by customer for detail list
   const paymentsByCustomer = useMemo(() => {
     const map = new Map()
-    for (const evt of paymentEvents) {
+    for (const evt of filteredPaymentEvents) {
       const key = evt.customer_name
       if (!map.has(key)) map.set(key, [])
       map.get(key).push(evt)
@@ -243,7 +455,14 @@ export default function Receivables() {
         return sumB - sumA
       })
     )
-  }, [paymentEvents])
+  }, [filteredPaymentEvents])
+
+  // Match review: filtered list
+  const filteredMatchList = useMemo(() => {
+    if (matchStatusFilter === 'all') return matchList
+    if (matchStatusFilter === 'pending') return matchList.filter(m => m.status === 'pending' || m.status === 'auto_matched')
+    return matchList.filter(m => m.status === matchStatusFilter)
+  }, [matchList, matchStatusFilter])
 
   async function handleUpload(e) {
     const file = e.target.files?.[0]
@@ -300,6 +519,9 @@ export default function Receivables() {
         // Invalidate collections cache so it reloads on next view
         collectionsLoaded.current = false
         setPaymentEvents([])
+        // Invalidate match data so it reloads
+        setMatchDataLoaded(false)
+        setMatchList([])
       }
     } catch (err) {
       setImportResult({ error: err.message })
@@ -307,6 +529,21 @@ export default function Receivables() {
       setUploading(false)
     }
   }
+
+  // ── Confidence color helper ──────────────────────────────────────────────
+  function scoreColor(score) {
+    if (score >= 0.8) return 'text-green-600'
+    if (score >= 0.5) return 'text-amber-600'
+    return 'text-gray-400'
+  }
+
+  // ── Link status pill ─────────────────────────────────────────────────────
+  const LINK_STATUS_OPTIONS = [
+    { key: 'all', label: 'All' },
+    { key: 'contracted', label: 'Contracted Deal' },
+    { key: 'matched', label: 'Matched' },
+    { key: 'unmatched', label: 'Unmatched' },
+  ]
 
   return (
     <div className="max-w-5xl mx-auto space-y-5 pb-16">
@@ -341,11 +578,24 @@ export default function Receivables() {
         </div>
       </div>
 
-      {/* Main view toggle: AR Aging | Collections */}
+      {/* Main view toggle: AR Aging | Collections | Customer Matches */}
       <div className="flex rounded-lg border border-gray-200 bg-white overflow-hidden w-fit">
         {[
           { key: 'aging', label: 'AR Aging' },
           { key: 'collections', label: 'Collections' },
+          {
+            key: 'matches',
+            label: (
+              <span className="flex items-center gap-1.5">
+                Customer Matches
+                {pendingMatchCount !== null && pendingMatchCount > 0 && (
+                  <span className={`inline-flex items-center justify-center rounded-full text-xs font-bold min-w-[18px] h-[18px] px-1 ${mainView === 'matches' ? 'bg-white/20 text-white' : 'bg-primary-100 text-primary-700'}`}>
+                    {pendingMatchCount}
+                  </span>
+                )}
+              </span>
+            ),
+          },
         ].map(({ key, label }) => (
           <button
             key={key}
@@ -411,6 +661,23 @@ export default function Receivables() {
 
           {/* Filters */}
           <div className="flex flex-wrap items-center gap-3">
+            {/* Link status filter */}
+            <div className="flex rounded-lg border border-gray-200 bg-white overflow-hidden">
+              {LINK_STATUS_OPTIONS.map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setLinkStatusFilter(key)}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                    linkStatusFilter === key
+                      ? 'bg-primary-500 text-white'
+                      : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
             {/* Customer dropdown */}
             <div className="relative">
               <select
@@ -526,6 +793,23 @@ export default function Receivables() {
       {/* ── COLLECTIONS VIEW ── */}
       {mainView === 'collections' && (
         <>
+          {/* Link status filter */}
+          <div className="flex rounded-lg border border-gray-200 bg-white overflow-hidden w-fit">
+            {LINK_STATUS_OPTIONS.map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => setLinkStatusFilter(key)}
+                className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                  linkStatusFilter === key
+                    ? 'bg-primary-500 text-white'
+                    : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
           {collectionsLoading ? (
             <Card>
               <div className="flex items-center justify-center py-12">
@@ -665,6 +949,241 @@ export default function Receivables() {
                   })}
                 </div>
               </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── CUSTOMER MATCHES VIEW ── */}
+      {mainView === 'matches' && (
+        <>
+          {matchLoading ? (
+            <Card>
+              <div className="flex items-center justify-center py-12">
+                <div className="w-6 h-6 border-2 border-primary-400 border-t-transparent rounded-full animate-spin" />
+              </div>
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              {/* Header row: filter pills + bulk action */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex rounded-lg border border-gray-200 bg-white overflow-hidden">
+                  {[
+                    { key: 'all', label: 'All' },
+                    { key: 'pending', label: 'Needs Review' },
+                    { key: 'auto_matched', label: 'Auto-matched' },
+                    { key: 'approved', label: 'Approved' },
+                    { key: 'rejected', label: 'Rejected' },
+                  ].map(({ key, label }) => (
+                    <button
+                      key={key}
+                      onClick={() => setMatchStatusFilter(key)}
+                      className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                        matchStatusFilter === key
+                          ? 'bg-primary-500 text-white'
+                          : 'text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={bulkApproveHighConfidence}
+                >
+                  Bulk Approve High Confidence (≥85%)
+                </Button>
+              </div>
+
+              {/* Match review table */}
+              <Card padding={false}>
+                {/* Table header */}
+                <div className="grid grid-cols-[2fr_1.5fr_1.5fr_80px_1fr] gap-3 px-5 py-2.5 border-b border-gray-100 bg-gray-50/60">
+                  <span className="text-xs uppercase tracking-wide text-gray-400">AR Customer Name</span>
+                  <span className="text-xs uppercase tracking-wide text-gray-400">Current Match</span>
+                  <span className="text-xs uppercase tracking-wide text-gray-400">Best Suggestion</span>
+                  <span className="text-xs uppercase tracking-wide text-gray-400 text-right">Confidence</span>
+                  <span className="text-xs uppercase tracking-wide text-gray-400">Action</span>
+                </div>
+
+                {filteredMatchList.length === 0 ? (
+                  <div className="text-center py-10">
+                    <p className="text-sm text-gray-500">No entries match the current filter.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-gray-50">
+                    {filteredMatchList.map((m) => {
+                      const isChangeOpen = changeOpenFor === m.customer_name
+                      return (
+                        <div key={m.customer_name} className="grid grid-cols-[2fr_1.5fr_1.5fr_80px_1fr] gap-3 px-5 py-3.5 items-start hover:bg-gray-50/40 transition-colors">
+                          {/* AR Customer Name */}
+                          <p className="text-sm font-medium text-navy-900 break-words">{m.customer_name}</p>
+
+                          {/* Current Match */}
+                          <div>
+                            {m.current_company ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">
+                                {m.current_company.name}
+                              </span>
+                            ) : (
+                              <span className="text-sm text-gray-400">—</span>
+                            )}
+                          </div>
+
+                          {/* Best Suggestion */}
+                          <div>
+                            {m.suggested_company ? (
+                              <span className={`text-sm font-medium ${scoreColor(m.suggested_score)}`}>
+                                {m.suggested_company.name}
+                              </span>
+                            ) : (
+                              <span className="text-sm text-gray-400">—</span>
+                            )}
+                          </div>
+
+                          {/* Confidence */}
+                          <div className="text-right">
+                            <span className={`text-sm font-medium ${scoreColor(m.suggested_score)}`}>
+                              {m.suggested_company ? `${Math.round(m.suggested_score * 100)}%` : '—'}
+                            </span>
+                          </div>
+
+                          {/* Action */}
+                          <div className="flex flex-col gap-1.5 min-w-0">
+                            {m.status === 'pending' && (
+                              <>
+                                {m.suggested_company && (
+                                  <Button
+                                    size="xs"
+                                    variant="primary"
+                                    onClick={() => approveMatch(m.customer_name, m.suggested_company.id, m.suggested_score)}
+                                  >
+                                    Approve {m.suggested_company.name}
+                                  </Button>
+                                )}
+                                <div className="flex gap-1.5 flex-wrap">
+                                  <Button
+                                    size="xs"
+                                    variant="secondary"
+                                    onClick={() => rejectMatch(m.customer_name)}
+                                  >
+                                    No Match
+                                  </Button>
+                                  <select
+                                    className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white text-navy-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
+                                    value=""
+                                    onChange={(e) => {
+                                      if (e.target.value) {
+                                        approveMatch(m.customer_name, e.target.value, 0)
+                                      }
+                                    }}
+                                  >
+                                    <option value="">Override…</option>
+                                    {allCompanies.map(c => (
+                                      <option key={c.id} value={c.id}>{c.name}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </>
+                            )}
+
+                            {m.status === 'auto_matched' && (
+                              <>
+                                {!isChangeOpen ? (
+                                  <div className="flex gap-1.5 flex-wrap">
+                                    <Button
+                                      size="xs"
+                                      variant="primary"
+                                      onClick={() => approveMatch(m.customer_name, m.current_company_id, m.suggested_score)}
+                                    >
+                                      ✓ Confirm
+                                    </Button>
+                                    <Button
+                                      size="xs"
+                                      variant="secondary"
+                                      onClick={() => { setChangeOpenFor(m.customer_name); setChangeValue(m.current_company_id || '') }}
+                                    >
+                                      Change
+                                    </Button>
+                                    <Button
+                                      size="xs"
+                                      variant="secondary"
+                                      onClick={() => rejectMatch(m.customer_name)}
+                                    >
+                                      No Match
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <div className="flex gap-1.5 flex-wrap items-center">
+                                    <select
+                                      className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white text-navy-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
+                                      value={changeValue}
+                                      onChange={(e) => setChangeValue(e.target.value)}
+                                    >
+                                      <option value="">Select…</option>
+                                      {allCompanies.map(c => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                      ))}
+                                    </select>
+                                    <Button
+                                      size="xs"
+                                      variant="primary"
+                                      onClick={() => {
+                                        if (changeValue) {
+                                          approveMatch(m.customer_name, changeValue, 0)
+                                          setChangeOpenFor(null)
+                                        }
+                                      }}
+                                    >
+                                      Apply
+                                    </Button>
+                                    <button
+                                      className="text-xs text-gray-400 hover:text-gray-600"
+                                      onClick={() => setChangeOpenFor(null)}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                )}
+                              </>
+                            )}
+
+                            {m.status === 'approved' && (
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">
+                                  ✓ Approved
+                                </span>
+                                <button
+                                  className="text-xs text-gray-400 hover:text-gray-600 hover:underline"
+                                  onClick={() => undoMatch(m.customer_name)}
+                                >
+                                  Undo
+                                </button>
+                              </div>
+                            )}
+
+                            {m.status === 'rejected' && (
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+                                  No Match
+                                </span>
+                                <button
+                                  className="text-xs text-gray-400 hover:text-gray-600 hover:underline"
+                                  onClick={() => undoMatch(m.customer_name)}
+                                >
+                                  Undo
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </Card>
             </div>
           )}
         </>

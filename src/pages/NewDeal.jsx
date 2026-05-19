@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
+import { format, parseISO } from 'date-fns'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Plus, Trash2, ChevronUp, ChevronDown, Eye } from 'lucide-react'
 import { supabase } from '../lib/supabase'
@@ -33,6 +34,9 @@ export default function NewDeal() {
 
   // Tracks whether contract_end was manually edited by the user (vs auto-filled)
   const [endDateManual, setEndDateManual] = useState(false)
+
+  // AR earliest invoice date hint for contract start
+  const [arEarliestDate, setArEarliestDate] = useState(null)
 
   // Form state
   const [form, setForm] = useState({
@@ -74,6 +78,26 @@ export default function NewDeal() {
     }
     fetchQ()
   }, [editId])
+
+  // Fetch earliest AR invoice date when company changes
+  useEffect(() => {
+    if (!form.company_id || form.company_id === 'other') {
+      setArEarliestDate(null)
+      return
+    }
+    supabase
+      .from('receivables')
+      .select('creation_date')
+      .eq('company_id', form.company_id)
+      .not('creation_date', 'is', null)
+      .order('creation_date', { ascending: true })
+      .limit(1)
+      .single()
+      .then(({ data }) => {
+        if (data?.creation_date) setArEarliestDate(data.creation_date)
+        else setArEarliestDate(null)
+      })
+  }, [form.company_id])
 
   // Auto-calculate contract_months from date range
   useEffect(() => {
@@ -307,22 +331,30 @@ export default function NewDeal() {
                 <CurrencyInput label="Estimated ACV" hint="Manual estimate — overridden by product totals" value={form.acv} onChange={(v) => setForm({ ...form, acv: v })} />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <Input
-                  label="Contract Start"
-                  type="date"
-                  value={form.contract_start}
-                  onChange={(e) => {
-                    const start = e.target.value
-                    const updates = { contract_start: start }
-                    if (start && !endDateManual) {
-                      const d = new Date(start + 'T00:00:00')
-                      d.setFullYear(d.getFullYear() + 1)
-                      d.setDate(d.getDate() - 1)
-                      updates.contract_end = d.toISOString().split('T')[0]
-                    }
-                    setForm({ ...form, ...updates })
-                  }}
-                />
+                <div>
+                  <Input
+                    label="Contract Start"
+                    type="date"
+                    value={form.contract_start}
+                    onChange={(e) => {
+                      const start = e.target.value
+                      const updates = { contract_start: start }
+                      if (start && !endDateManual) {
+                        const d = new Date(start + 'T00:00:00')
+                        d.setFullYear(d.getFullYear() + 1)
+                        d.setDate(d.getDate() - 1)
+                        updates.contract_end = d.toISOString().split('T')[0]
+                      }
+                      setForm({ ...form, ...updates })
+                    }}
+                  />
+                  {arEarliestDate && !form.contract_start && (
+                    <p className="text-xs text-primary-500 mt-1 cursor-pointer hover:underline"
+                       onClick={() => setForm({ ...form, contract_start: arEarliestDate })}>
+                      AR history starts {format(parseISO(arEarliestDate), 'MMM d, yyyy')} — use as start date?
+                    </p>
+                  )}
+                </div>
                 <Input
                   label="Contract End"
                   type="date"
